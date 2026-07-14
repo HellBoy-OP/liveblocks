@@ -1,14 +1,16 @@
 import type { LiveNode } from "../crdts/Lson";
 import { nn } from "../lib/assert";
-import type { Json } from "../lib/Json";
+import type { Json, ReadonlyJson } from "../lib/Json";
 import { nanoid } from "../lib/nanoid";
 import { deepClone } from "../lib/utils";
 import type { CreateOp, CreateRegisterOp, Op } from "../protocol/Op";
 import { OpCode } from "../protocol/Op";
-import type { IdTuple, SerializedRegister } from "../protocol/SerializedCrdt";
-import { CrdtType } from "../protocol/SerializedCrdt";
+import type {
+  RegisterStorageNode,
+  SerializedRegister,
+} from "../protocol/StorageNode";
+import { CrdtType } from "../protocol/StorageNode";
 import type * as DevTools from "../types/DevToolsTreeNode";
-import type { Immutable } from "../types/Immutable";
 import type { ParentToChildNodeMap } from "../types/NodeMap";
 import type { ApplyResult, ManagedPool } from "./AbstractCrdt";
 import { AbstractCrdt } from "./AbstractCrdt";
@@ -30,7 +32,7 @@ export class LiveRegister<TValue extends Json> extends AbstractCrdt {
 
   /** @internal */
   static _deserialize(
-    [id, item]: IdTuple<SerializedRegister>,
+    [id, item]: RegisterStorageNode,
     _parentToChildren: ParentToChildNodeMap,
     pool: ManagedPool
   ): LiveRegister<Json> {
@@ -98,7 +100,7 @@ export class LiveRegister<TValue extends Json> extends AbstractCrdt {
   }
 
   /** @internal */
-  _toImmutable(): Immutable {
+  _toJSON(): ReadonlyJson {
     return this.#data;
   }
 

@@ -1,5 +1,6 @@
 "use client"
 import { siteConfig } from "@/app/siteConfig"
+import { CommentsOpenButton } from "@/components/comments/CommentsFloatingToggle"
 import { Tooltip } from "@/components/Tooltip"
 import { cx, focusRing } from "@/lib/utils"
 import {
@@ -14,6 +15,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import MobileSidebar from "./MobileSidebar"
 import { UserProfileDesktop, UserProfileMobile } from "./UserProfile"
+import { HelpButton } from "@/components/HelpButton"
 
 const navigation = [
   { name: "Reports", href: siteConfig.baseLinks.reports, icon: BarChartBig },
@@ -206,7 +208,8 @@ export function Sidebar({ isCollapsed, toggleSidebar }: SidebarProps) {
               </ul>
             </div> */}
           </nav>
-          <div className="mt-auto">
+          <div className="mt-auto flex flex-col gap-1">
+            <HelpButton isCollapsed={isCollapsed} />
             <UserProfileDesktop isCollapsed={isCollapsed} />
           </div>
         </aside>
@@ -225,6 +228,7 @@ export function Sidebar({ isCollapsed, toggleSidebar }: SidebarProps) {
         </span>
         <div className="flex items-center gap-1 sm:gap-2">
           <UserProfileMobile />
+          <CommentsOpenButton className="lg:hidden" />
           <MobileSidebar />
         </div>
       </div>

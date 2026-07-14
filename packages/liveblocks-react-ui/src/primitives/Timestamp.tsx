@@ -1,6 +1,6 @@
 "use client";
 
-import { Slot } from "@radix-ui/react-slot";
+import { Slot as SlotPrimitive } from "radix-ui";
 import type { ReactNode } from "react";
 import { forwardRef, useMemo } from "react";
 
@@ -15,8 +15,10 @@ const RENDER_INTERVAL = 30 * 1000; // 30 seconds
 
 const TIMESTAMP_NAME = "Timestamp";
 
-export interface TimestampProps
-  extends Omit<ComponentPropsWithSlot<"time">, "children" | "title"> {
+export interface TimestampProps extends Omit<
+  ComponentPropsWithSlot<"time">,
+  "children" | "title"
+> {
   /**
    * The date to display.
    */
@@ -175,7 +177,7 @@ export const Timestamp = forwardRef<HTMLTimeElement, TimestampProps>(
     },
     forwardedRef
   ) => {
-    const Component = asChild ? Slot : "time";
+    const Component = asChild ? SlotPrimitive.Slot : "time";
     const [rerender, key] = useRerender();
     const parsedDate = useMemo(() => new Date(date), [date]);
     const normalizedDate = useMemo(

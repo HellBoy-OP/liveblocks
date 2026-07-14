@@ -2,7 +2,7 @@ import type { LiveList } from "../crdts/LiveList";
 import type { LiveMap } from "../crdts/LiveMap";
 import type { LiveObject } from "../crdts/LiveObject";
 import type { LiveRegister } from "../crdts/LiveRegister";
-import type { Json } from "../lib/Json";
+import type { Json, ReadonlyJson, ReadonlyJsonObject } from "../lib/Json";
 
 export type LiveStructure =
   | LiveObject<LsonObject>
@@ -30,7 +30,7 @@ export type LiveNode =
  * A mapping of keys to Lson values. A Lson value is any valid JSON
  * value or a Live storage data structure (LiveMap, LiveList, etc.)
  */
-export type LsonObject = { [key: string]: Lson | undefined };
+export type LsonObject = Record<string, Lson | undefined>;
 
 /**
  * Helper type to convert any valid Lson type to the equivalent Json type.
@@ -41,31 +41,45 @@ export type LsonObject = { [key: string]: Lson | undefined };
  *   ToJson<'hi'>                       // 'hi'
  *   ToJson<number>                     // number
  *   ToJson<string>                     // string
- *   ToJson<string | LiveList<number>>  // string | number[]
+ *   ToJson<string | LiveList<number>>  // string | readonly number[]
  *   ToJson<LiveMap<string, LiveList<number>>>
- *                                      // { [key: string]: number[] }
+ *                                      // { readonly [key: string]: readonly number[] }
  *   ToJson<LiveObject<{ a: number, b: LiveList<string>, c?: number }>>
- *                                      // { a: null, b: string[], c?: number }
- *
+ *                                      // { readonly a: null, readonly b: readonly string[], readonly c?: number }
  */
 // prettier-ignore
-export type ToJson<T extends Lson | LsonObject> =
-  // Any Json value already is a legal Json value
-  T extends Json ? T :
-
-  // Any LsonObject recursively becomes a JsonObject
-  T extends LsonObject ?
-    { [K in keyof T]: ToJson<Exclude<T[K], undefined>>
-                        | (undefined extends T[K] ? undefined : never) } :
-
+export type ToJson<L extends Lson | LsonObject> =
   // A LiveList serializes to an equivalent JSON array
-  T extends LiveList<infer I> ? ToJson<I>[] :
+  // Short-circuit fully opaque LiveList<Lson> to avoid recursive expansion
+  L extends LiveList<infer I extends Lson> ?
+    Lson extends I ? readonly ReadonlyJson[] :
+    readonly ToJson<I>[] :
 
   // A LiveObject serializes to an equivalent JSON object
-  T extends LiveObject<infer O> ? ToJson<O> :
+  // Short-circuit fully opaque LiveObject<LsonObject> to avoid recursive expansion
+  // Otherwise, inline the mapped type here (instead of ToJson<O>) so that
+  // Record<string, LiveObject<...>> doesn't hit the LsonObject branch's guard.
+  L extends LiveObject<infer O extends LsonObject> ?
+    LsonObject extends O ? ReadonlyJsonObject :
+    { readonly [K in keyof O]: ToJson<Exclude<O[K], undefined>>
+                                 | (undefined extends O[K] ? undefined : never) } :
 
   // A LiveMap serializes to a JSON object with string-V pairs
-  T extends LiveMap<infer KS, infer V> ? { [K in KS]: ToJson<V> } :
+  // Short-circuit fully opaque LiveMap<string, Lson> to avoid recursive expansion
+  L extends LiveMap<infer KS extends string, infer V extends Lson> ?
+    Lson extends V ? ReadonlyJsonObject :
+    { readonly [K in KS]: ToJson<V> } :
+
+  // Any LsonObject recursively becomes a JsonObject
+  // Short-circuit generic string-keyed objects to ReadonlyJsonObject to avoid
+  // ugly recursive expansion (e.g. ToJson<LsonObject> or ToJson<JsonObject>)
+  L extends LsonObject ?
+    string extends keyof L ? ReadonlyJsonObject :
+    { readonly [K in keyof L]: ToJson<Exclude<L[K], undefined>>
+                                 | (undefined extends L[K] ? undefined : never) } :
+
+  // Any Json value already is a legal Json value
+  L extends Json ? L :
 
   // Otherwise, this is not possible
   never;

@@ -6,7 +6,7 @@ import {
 } from "@liveblocks/core";
 import { useClient } from "@liveblocks/react";
 import { useLayoutEffect, useSignal } from "@liveblocks/react/_private";
-import { Slot } from "@radix-ui/react-slot";
+import { Slot as SlotPrimitive } from "radix-ui";
 import type { FocusEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
 import {
   forwardRef,
@@ -101,7 +101,7 @@ export const AiComposerForm = forwardRef<HTMLFormElement, AiComposerFormProps>(
     },
     forwardedRef
   ) => {
-    const Component = asChild ? Slot : "form";
+    const Component = asChild ? SlotPrimitive.Slot : "form";
     const client = useClient();
     const formRef = useRef<HTMLFormElement | null>(null);
     const editor = useInitial(() =>
@@ -416,9 +416,17 @@ const AiComposerEditor = forwardRef<HTMLDivElement, AiComposerEditorProps>(
 
     // Manually focus the editor when `autoFocus` is true
     useLayoutEffect(() => {
-      if (autoFocus) {
-        focus();
+      if (!autoFocus) {
+        return;
       }
+
+      // `focus` needs to be synchronous to ensure its errors can be caught
+      // but the triggering of `focus` on mount itself can be asynchronous.
+      // This brings back the same timing behavior as Slate's `ReactEditor.focus`
+      // (which uses `setTimeout` internally) while still allowing us to catch errors.
+      const timeout = setTimeout(() => focus(), 0);
+
+      return () => clearTimeout(timeout);
     }, [autoFocus, editor, focus]);
 
     // Manually add a selection in the editor if the selection
@@ -443,6 +451,7 @@ const AiComposerEditor = forwardRef<HTMLDivElement, AiComposerEditorProps>(
       >
         <Editable
           dir={dir}
+          tabIndex={isDisabled ? -1 : 0}
           enterKeyHint="send"
           autoCapitalize="sentences"
           aria-label="Composer editor"
@@ -475,7 +484,7 @@ export const AiComposerSubmit = forwardRef<
   HTMLButtonElement,
   AiComposerSubmitProps
 >(({ disabled, asChild, ...props }, forwardedRef) => {
-  const Component = asChild ? Slot : "button";
+  const Component = asChild ? SlotPrimitive.Slot : "button";
   const { isDisabled: isComposerDisabled, canSubmit } = useAiComposer();
   const isDisabled = isComposerDisabled || disabled || !canSubmit;
 
@@ -503,7 +512,7 @@ export const AiComposerAbort = forwardRef<
   HTMLButtonElement,
   AiComposerSubmitProps
 >(({ disabled, onClick, asChild, ...props }, forwardedRef) => {
-  const Component = asChild ? Slot : "button";
+  const Component = asChild ? SlotPrimitive.Slot : "button";
   const { isDisabled: isComposerDisabled, canAbort, abort } = useAiComposer();
   const isDisabled = isComposerDisabled || disabled || !canAbort;
 

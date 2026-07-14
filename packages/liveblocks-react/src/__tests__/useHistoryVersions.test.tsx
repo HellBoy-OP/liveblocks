@@ -1,13 +1,21 @@
-import "@testing-library/jest-dom";
-
-import type { HistoryVersion } from "@liveblocks/core";
+import type { HistoryVersion } from "@liveblocks/client";
 import { nanoid } from "@liveblocks/core";
-import { fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
-import type { ResponseResolver, RestContext, RestRequest } from "msw";
-import { rest } from "msw";
+import { fireEvent, renderHook, screen } from "@testing-library/react";
+import type { HttpResponseResolver } from "msw";
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 
 import MockWebSocket from "./_MockWebSocket";
 import { createContextsForTest } from "./_utils";
@@ -23,16 +31,16 @@ beforeEach(() => {
 afterEach(() => {
   MockWebSocket.reset();
   server.resetHandlers();
-  jest.clearAllTimers();
-  jest.clearAllMocks();
+  vi.clearAllTimers();
+  vi.clearAllMocks();
 });
 
 afterAll(() => server.close());
 
 function mockListHistoryVersions(
-  resolver: ResponseResolver<
-    RestRequest<never, { roomId: string }>,
-    RestContext,
+  resolver: HttpResponseResolver<
+    { roomId: string },
+    never,
     {
       versions: HistoryVersion[];
       meta: {
@@ -41,16 +49,16 @@ function mockListHistoryVersions(
     }
   >
 ) {
-  return rest.get(
+  return http.get(
     "https://api.liveblocks.io/v2/c/rooms/:roomId/versions",
     resolver
   );
 }
 
 function mockGetHistoryVersionsSince(
-  resolver: ResponseResolver<
-    RestRequest<never, { roomId: string }>,
-    RestContext,
+  resolver: HttpResponseResolver<
+    { roomId: string },
+    never,
     {
       versions: HistoryVersion[];
       meta: {
@@ -59,7 +67,7 @@ function mockGetHistoryVersionsSince(
     }
   >
 ) {
-  return rest.get(
+  return http.get(
     "https://api.liveblocks.io/v2/c/rooms/:roomId/versions/delta",
     resolver
   );
@@ -67,39 +75,31 @@ function mockGetHistoryVersionsSince(
 
 describe("useHistoryVersions", () => {
   beforeAll(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterAll(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   test("should fetch room versions on mount", async () => {
     const roomId = nanoid();
     const versions: HistoryVersion[] = [
       {
-        type: "historyVersion",
-        kind: "yjs",
+        id: "vh_version_1",
         createdAt: new Date(),
-        id: "version_1",
-        authors: [
-          {
-            id: "user-1",
-          },
-        ],
+        authors: [{ id: "user-1" }],
       },
     ];
 
     server.use(
-      mockListHistoryVersions((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            versions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-            },
-          })
-        );
+      mockListHistoryVersions(() => {
+        return HttpResponse.json({
+          versions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+          },
+        });
       })
     );
 
@@ -117,7 +117,7 @@ describe("useHistoryVersions", () => {
       isLoading: true,
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         versions,
@@ -131,28 +131,20 @@ describe("useHistoryVersions", () => {
     const roomId = nanoid();
     const versions: HistoryVersion[] = [
       {
-        type: "historyVersion",
-        kind: "yjs",
+        id: "vh_version_1",
         createdAt: new Date(),
-        id: "version_1",
-        authors: [
-          {
-            id: "user-1",
-          },
-        ],
+        authors: [{ id: "user-1" }],
       },
     ];
 
     server.use(
-      mockListHistoryVersions((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            versions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-            },
-          })
-        );
+      mockListHistoryVersions(() => {
+        return HttpResponse.json({
+          versions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+          },
+        });
       })
     );
 
@@ -163,10 +155,8 @@ describe("useHistoryVersions", () => {
 
     umbrellaStore.historyVersions.update("room-1", [
       {
-        type: "historyVersion",
-        kind: "yjs",
+        id: "vh_version_1",
         createdAt: new Date(),
-        id: "version_1",
         authors: [{ id: "user-1" }],
       },
     ]);
@@ -181,7 +171,7 @@ describe("useHistoryVersions", () => {
       isLoading: true,
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         versions,
@@ -194,12 +184,12 @@ describe("useHistoryVersions", () => {
 
 describe("useHistoryVersions: error", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.clearAllTimers();
-    jest.useRealTimers(); // Restores the real timers
+    vi.clearAllTimers();
+    vi.useRealTimers(); // Restores the real timers
   });
 
   test("should return error if initial fetch throws an error", async () => {
@@ -207,9 +197,9 @@ describe("useHistoryVersions: error", () => {
     const roomId = nanoid();
 
     server.use(
-      mockListHistoryVersions((_req, res, ctx) => {
+      mockListHistoryVersions(() => {
         listHistoryVersionsReqCount++;
-        return res(ctx.status(500));
+        return HttpResponse.json(null, { status: 500 });
       })
     );
 
@@ -226,26 +216,26 @@ describe("useHistoryVersions: error", () => {
     expect(result.current).toEqual({ isLoading: true });
 
     // Wait until all fetch attempts have been done
-    await jest.advanceTimersToNextTimerAsync(); // fetch attempt 1
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(1));
 
     // The first retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     // A new fetch request for the threads should have been made after the first retry
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(2));
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(2));
 
     // The second retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(3));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(3));
 
     // The third retry should be made after 10s
-    await jest.advanceTimersByTimeAsync(10_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(4));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(4));
 
     // The fourth retry should be made after 15s
-    await jest.advanceTimersByTimeAsync(15_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(5));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(5));
 
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(result.current).toEqual({
         isLoading: false,
         error: expect.any(Error),
@@ -253,17 +243,17 @@ describe("useHistoryVersions: error", () => {
     });
 
     // Wait for 5 second for the error to clear
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     // A new fetch request for the threads should have been made after the initial render
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(6));
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(6));
     expect(result.current).toEqual({
       isLoading: true,
     });
 
     // The first retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(7));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(7));
 
     // and so on...
 
@@ -273,39 +263,31 @@ describe("useHistoryVersions: error", () => {
 
 describe("useHistoryVersions: suspense", () => {
   beforeAll(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterAll(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   test("should fetch user threads on render", async () => {
     const roomId = nanoid();
     const versions: HistoryVersion[] = [
       {
-        type: "historyVersion",
-        kind: "yjs",
+        id: "vh_version_1",
         createdAt: new Date(),
-        id: "version_1",
-        authors: [
-          {
-            id: "user-1",
-          },
-        ],
+        authors: [{ id: "user-1" }],
       },
     ];
 
     server.use(
-      mockListHistoryVersions((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            versions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-            },
-          })
-        );
+      mockListHistoryVersions(() => {
+        return HttpResponse.json({
+          versions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+          },
+        });
       })
     );
 
@@ -325,7 +307,7 @@ describe("useHistoryVersions: suspense", () => {
 
     expect(result.current).toEqual(null);
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         versions,
@@ -338,12 +320,12 @@ describe("useHistoryVersions: suspense", () => {
 
 describe("useHistoryVersions: error", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.clearAllTimers();
-    jest.useRealTimers(); // Restores the real timers
+    vi.clearAllTimers();
+    vi.useRealTimers(); // Restores the real timers
     server.resetHandlers();
   });
 
@@ -353,9 +335,9 @@ describe("useHistoryVersions: error", () => {
     const roomId = nanoid();
 
     server.use(
-      mockListHistoryVersions((_req, res, ctx) => {
+      mockListHistoryVersions(() => {
         listHistoryVersionsReqCount++;
-        return res(ctx.status(500));
+        return HttpResponse.json(null, { status: 500 });
       })
     );
 
@@ -389,40 +371,40 @@ describe("useHistoryVersions: error", () => {
     expect(screen.getByText("Loading")).toBeInTheDocument();
 
     // Wait until all fetch attempts have been done
-    await jest.advanceTimersToNextTimerAsync(); // fetch attempt 1
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(1));
 
     // The first retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     // A new fetch request for the threads should have been made after the first retry
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(2));
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(2));
 
     // The second retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(3));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(3));
 
     // The third retry should be made after 10s
-    await jest.advanceTimersByTimeAsync(10_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(4));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(4));
 
     // The fourth retry should be made after 15s
-    await jest.advanceTimersByTimeAsync(15_000);
-    await waitFor(() => expect(listHistoryVersionsReqCount).toBe(5));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(listHistoryVersionsReqCount).toBe(5));
 
     // Check if the error boundary's fallback is displayed
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(
         screen.getByText("There was an error while getting threads.")
       ).toBeInTheDocument();
     });
 
     // Wait until the error boundary auto-clears
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     // Simulate clicking the retry button
     fireEvent.click(screen.getByText("Retry"));
 
     // The error boundary's fallback should be cleared
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(screen.getByText("Loading")).toBeInTheDocument();
     });
 
@@ -432,53 +414,43 @@ describe("useHistoryVersions: error", () => {
 
 describe("useHistoryVersions: polling", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.useRealTimers();
-    jest.clearAllTimers();
+    vi.useRealTimers();
+    vi.clearAllTimers();
     server.resetHandlers();
   });
   test("should poll threads every x seconds", async () => {
     const roomId = nanoid();
     const versions: HistoryVersion[] = [
       {
-        type: "historyVersion",
-        kind: "yjs",
+        id: "vh_version_1",
         createdAt: new Date(),
-        id: "version_1",
-        authors: [
-          {
-            id: "user-1",
-          },
-        ],
+        authors: [{ id: "user-1" }],
       },
     ];
 
     let getHistoryVersionsSinceCount = 0;
 
     server.use(
-      mockListHistoryVersions((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            versions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-            },
-          })
-        );
+      mockListHistoryVersions(() => {
+        return HttpResponse.json({
+          versions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+          },
+        });
       }),
-      mockGetHistoryVersionsSince((_req, res, ctx) => {
+      mockGetHistoryVersionsSince(() => {
         getHistoryVersionsSinceCount++;
-        return res(
-          ctx.json({
-            versions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-            },
-          })
-        );
+        return HttpResponse.json({
+          versions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+          },
+        });
       })
     );
 
@@ -496,7 +468,7 @@ describe("useHistoryVersions: polling", () => {
       isLoading: true,
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         versions,
@@ -507,22 +479,16 @@ describe("useHistoryVersions: polling", () => {
     expect(getHistoryVersionsSinceCount).toBe(0);
 
     versions.push({
-      type: "historyVersion",
-      kind: "yjs",
+      id: "vh_version_2",
       createdAt: new Date(),
-      id: "version_2",
-      authors: [
-        {
-          id: "user-2",
-        },
-      ],
+      authors: [{ id: "user-2" }],
     });
 
     // Wait for the first polling to occur after the initial render
-    await jest.advanceTimersByTimeAsync(60_000);
-    await waitFor(() => expect(getHistoryVersionsSinceCount).toBe(1));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(getHistoryVersionsSinceCount).toBe(1));
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         versions,

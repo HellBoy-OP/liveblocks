@@ -1,8 +1,17 @@
-import "@testing-library/jest-dom";
-
 import { nanoid } from "@liveblocks/core";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
+import { HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 
 import { useGroup } from "../use-group";
 import { dummyGroupData } from "./_dummies";
@@ -13,7 +22,7 @@ import { createContextsForTest } from "./_utils";
 const server = setupServer();
 
 beforeAll(() => {
-  jest.useFakeTimers();
+  vi.useFakeTimers();
   server.listen({ onUnhandledRequest: "error" });
 });
 
@@ -27,7 +36,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  jest.useRealTimers();
+  vi.useRealTimers();
   server.close();
 });
 
@@ -40,24 +49,22 @@ describe("useGroup", () => {
     } = createContextsForTest();
 
     server.use(
-      mockFindGroups(async (req, res, ctx) => {
-        const { groupIds } = await req.json();
+      mockFindGroups(async ({ request }) => {
+        const { groupIds } = await request.json();
 
-        return res(
-          ctx.json({
-            groups: (groupIds as string[]).map((groupId) =>
-              dummyGroupData({
-                id: groupId,
-                members: [
-                  {
-                    id: "user-0",
-                    addedAt: new Date(),
-                  },
-                ],
-              })
-            ),
-          })
-        );
+        return HttpResponse.json({
+          groups: groupIds.map((groupId) =>
+            dummyGroupData({
+              id: groupId,
+              members: [
+                {
+                  id: "user-0",
+                  addedAt: new Date(),
+                },
+              ],
+            })
+          ),
+        });
       })
     );
 
@@ -74,7 +81,7 @@ describe("useGroup", () => {
 
     expect(result.current.group).toEqual({ isLoading: true });
 
-    await waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
+    await vi.waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
 
     expect(result.current.group).toEqual({
       isLoading: false,
@@ -89,6 +96,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },
@@ -105,12 +113,10 @@ describe("useGroup", () => {
     } = createContextsForTest();
 
     server.use(
-      mockFindGroups(async (_req, res, ctx) => {
-        return res(
-          ctx.json({
-            groups: [],
-          })
-        );
+      mockFindGroups(async () => {
+        return HttpResponse.json({
+          groups: [],
+        });
       })
     );
 
@@ -127,7 +133,7 @@ describe("useGroup", () => {
 
     expect(result.current.group).toEqual({ isLoading: true });
 
-    await waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
+    await vi.waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
 
     expect(result.current.group).toEqual({
       isLoading: false,
@@ -145,22 +151,20 @@ describe("useGroup", () => {
     } = createContextsForTest();
 
     server.use(
-      mockFindGroups(async (_req, res, ctx) => {
-        return res(
-          ctx.json({
-            groups: [
-              dummyGroupData({
-                id: "engineering",
-                members: [
-                  {
-                    id: "user-0",
-                    addedAt: new Date(),
-                  },
-                ],
-              }),
-            ],
-          })
-        );
+      mockFindGroups(async () => {
+        return HttpResponse.json({
+          groups: [
+            dummyGroupData({
+              id: "engineering",
+              members: [
+                {
+                  id: "user-0",
+                  addedAt: new Date(),
+                },
+              ],
+            }),
+          ],
+        });
       })
     );
 
@@ -178,7 +182,7 @@ describe("useGroup", () => {
 
     expect(result.current.group).toEqual({ isLoading: true });
 
-    await waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
+    await vi.waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
 
     expect(result.current.group).toEqual({
       isLoading: false,
@@ -193,6 +197,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },
@@ -202,7 +207,7 @@ describe("useGroup", () => {
 
     expect(result.current.group).toEqual({ isLoading: true });
 
-    await waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
+    await vi.waitFor(() => expect(result.current.group.isLoading).toBeFalsy());
 
     expect(result.current.group).toEqual({
       isLoading: false,
@@ -219,29 +224,27 @@ describe("useGroup", () => {
       room: { RoomProvider },
     } = createContextsForTest();
 
-    const mockFindGroupsObserver = jest.fn<void, [string[]]>();
+    const mockFindGroupsObserver = vi.fn<(groupIds: string[]) => void>();
 
     server.use(
-      mockFindGroups(async (req, res, ctx) => {
-        const { groupIds } = await req.json();
+      mockFindGroups(async ({ request }) => {
+        const { groupIds } = await request.json();
 
         mockFindGroupsObserver(groupIds);
 
-        return res(
-          ctx.json({
-            groups: (groupIds as string[]).map((groupId) =>
-              dummyGroupData({
-                id: groupId,
-                members: [
-                  {
-                    id: "user-0",
-                    addedAt: new Date(),
-                  },
-                ],
-              })
-            ),
-          })
-        );
+        return HttpResponse.json({
+          groups: groupIds.map((groupId) =>
+            dummyGroupData({
+              id: groupId,
+              members: [
+                {
+                  id: "user-0",
+                  addedAt: new Date(),
+                },
+              ],
+            })
+          ),
+        });
       })
     );
 
@@ -258,7 +261,7 @@ describe("useGroup", () => {
       }
     );
 
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(result.current.groupEngineering.isLoading).toBeFalsy();
       expect(result.current.groupEngineering2.isLoading).toBeFalsy();
       expect(result.current.groupDesign.isLoading).toBeFalsy();
@@ -277,6 +280,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },
@@ -295,6 +299,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },
@@ -313,6 +318,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },
@@ -332,48 +338,44 @@ describe("useGroup", () => {
       liveblocks: { LiveblocksProvider, useInboxNotifications },
     } = createContextsForTest();
 
-    const mockFindGroupsObserver = jest.fn<void, [string[]]>();
+    const mockFindGroupsObserver = vi.fn<(groupIds: string[]) => void>();
 
     server.use(
-      mockGetInboxNotifications(async (_req, res, ctx) => {
-        return res(
-          ctx.json({
-            threads: [],
-            inboxNotifications: [],
-            subscriptions: [],
-            groups: [
-              dummyGroupData({
-                id: "engineering",
-                members: [{ id: "user-0", addedAt: new Date() }],
-              }),
-            ],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-            },
-          })
-        );
+      mockGetInboxNotifications(async () => {
+        return HttpResponse.json({
+          threads: [],
+          inboxNotifications: [],
+          subscriptions: [],
+          groups: [
+            dummyGroupData({
+              id: "engineering",
+              members: [{ id: "user-0", addedAt: new Date() }],
+            }),
+          ],
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+          },
+        });
       }),
-      mockFindGroups(async (req, res, ctx) => {
-        const { groupIds } = await req.json();
+      mockFindGroups(async ({ request }) => {
+        const { groupIds } = await request.json();
 
         mockFindGroupsObserver(groupIds);
 
-        return res(
-          ctx.json({
-            groups: (groupIds as string[]).map((groupId) =>
-              dummyGroupData({
-                id: groupId,
-                members: [
-                  {
-                    id: "user-0",
-                    addedAt: new Date(),
-                  },
-                ],
-              })
-            ),
-          })
-        );
+        return HttpResponse.json({
+          groups: groupIds.map((groupId) =>
+            dummyGroupData({
+              id: groupId,
+              members: [
+                {
+                  id: "user-0",
+                  addedAt: new Date(),
+                },
+              ],
+            })
+          ),
+        });
       })
     );
 
@@ -385,7 +387,7 @@ describe("useGroup", () => {
       ),
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(_useInboxNotifications.result.current).toEqual(
         expect.objectContaining({
           isLoading: false,
@@ -405,7 +407,7 @@ describe("useGroup", () => {
       }
     );
 
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(_useGroup.result.current.groupEngineering.isLoading).toBeFalsy();
       expect(_useGroup.result.current.groupDesign.isLoading).toBeFalsy();
     });
@@ -423,6 +425,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },
@@ -441,6 +444,7 @@ describe("useGroup", () => {
         ],
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        organizationId: "default",
         tenantId: "default",
         type: "group",
       },

@@ -1,6 +1,6 @@
 "use client";
 
-import { Slot } from "@radix-ui/react-slot";
+import { Slot as SlotPrimitive } from "radix-ui";
 import type { ReactNode } from "react";
 import { forwardRef, useMemo } from "react";
 
@@ -9,8 +9,10 @@ import { formatFileSize } from "../utils/format-file-size";
 
 const FILE_SIZE_NAME = "FileSize";
 
-export interface FileSizeProps
-  extends Omit<ComponentPropsWithSlot<"span">, "children"> {
+export interface FileSizeProps extends Omit<
+  ComponentPropsWithSlot<"span">,
+  "children"
+> {
   /**
    * The file size to display.
    */
@@ -44,7 +46,7 @@ export const FileSize = forwardRef<HTMLSpanElement, FileSizeProps>(
     },
     forwardedRef
   ) => {
-    const Component = asChild ? Slot : "span";
+    const Component = asChild ? SlotPrimitive.Slot : "span";
     const children = useMemo(
       () =>
         typeof renderChildren === "function"

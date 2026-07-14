@@ -12,6 +12,7 @@ type Storage = {
   obj: LiveObject<{
     a: number;
     nested: LiveList<string>;
+    localField?: string;
   }>;
 };
 
@@ -27,6 +28,7 @@ export const {
   RoomProvider,
   useCanRedo,
   useCanUndo,
+  useHistory,
   useIsInsideRoom,
   useMutation,
   useMyPresence,

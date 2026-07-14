@@ -1,4 +1,4 @@
-import { LiveList } from "@liveblocks/core";
+import { LiveList } from "@liveblocks/client";
 import { Liveblocks } from "@liveblocks/node";
 import { config } from "dotenv";
 import { describe, test, expect, onTestFinished, vi } from "vitest";
@@ -13,7 +13,6 @@ console.log(`Running against Liveblocks base URL: ${BASE_URL}`);
 
 const client = new Liveblocks({
   secret: process.env.LIVEBLOCKS_SECRET_KEY!,
-  // @ts-expect-error hidden config
   baseUrl: BASE_URL,
 });
 

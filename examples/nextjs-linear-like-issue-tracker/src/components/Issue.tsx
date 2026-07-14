@@ -4,11 +4,11 @@ import { Editor } from "@/components/Editor";
 import { IssueProperties } from "@/components/IssueProperties";
 import { IssueLabels } from "@/components/IssueLabels";
 import { IssueActions } from "@/components/IssueActions";
+import { IssueAiButton } from "@/components/IssueAiButton";
 import { liveblocks } from "@/liveblocks.server.config";
 import { withLexicalDocument } from "@liveblocks/node-lexical";
 import { getRoomId } from "@/config";
-import { HeadingNode, QuoteNode } from "@lexical/rich-text";
-import { ListItemNode, ListNode } from "@lexical/list";
+import { ISSUE_LEXICAL_NODES } from "@/lib/issue-lexical-nodes";
 import { IssueLinks } from "@/components/IssueLinks";
 import { $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown";
 import { marked } from "marked";
@@ -20,42 +20,73 @@ export async function Issue({ issueId }: { issueId: string }) {
   const roomId = getRoomId(issueId);
 
   // Get storage contents of room (e.g. issue properties) to render placeholder on load
-  const storagePromise = liveblocks.getStorageDocument(roomId, "json");
+  async function fetchStorage() {
+    "use cache";
+    const storagePromise = liveblocks.getStorageDocument(roomId, "json");
+    return storagePromise;
+  }
 
   // Get content and convert it to markdown for displaying a placeholder
-  const contentHtmlPromise = withLexicalDocument(
-    {
-      roomId,
-      client: liveblocks,
-      nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode],
-    },
-    async (doc) => {
-      let markdown = "";
+  async function fetchContentHtml() {
+    "use cache";
+    const contentHtmlPromise = withLexicalDocument(
+      {
+        roomId,
+        client: liveblocks,
+        nodes: [...ISSUE_LEXICAL_NODES],
+      },
+      async (doc) => {
+        let markdown = "";
 
-      doc.getEditorState().read(() => {
-        // Get markdown version of Lexical state
-        markdown = $convertToMarkdownString(TRANSFORMERS, undefined, true)
-          // Make new lines display correctly
-          .replace(/\n{2,}/g, (match) => "<p><br></p>".repeat(match.length - 1))
-          .replace(/\n(?!$)/g, "\n\n")
-          .replace(/(\n+)$/g, (match) => "<p><br></p>".repeat(match.length));
-      });
+        doc.getEditorState().read(() => {
+          // Get markdown version of Lexical state
+          markdown = $convertToMarkdownString(TRANSFORMERS, undefined, true)
+            // Make new lines display correctly
+            .replace(/\n{2,}/g, (match) =>
+              "<p><br></p>".repeat(match.length - 1)
+            )
+            .replace(/\n(?!$)/g, "\n\n")
+            .replace(/(\n+)$/g, (match) => "<p><br></p>".repeat(match.length));
+        });
 
-      // Remove all HTML tags but "p" and "br"
-      markdown = sanitizeHtml(markdown, {
-        allowedTags: ["p", "br"],
-        disallowedTagsMode: "escape",
-      });
+        const rawHtml = await marked(markdown);
 
-      return marked(markdown);
-    }
-  );
+        return sanitizeHtml(rawHtml, {
+          allowedTags: [
+            "p",
+            "br",
+            "strong",
+            "em",
+            "s",
+            "code",
+            "pre",
+            "blockquote",
+            "ul",
+            "ol",
+            "li",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "a",
+          ],
+          allowedAttributes: {
+            a: ["href", "name", "target", "rel"],
+          },
+          allowedSchemes: ["http", "https", "mailto"],
+        });
+      }
+    );
+    return contentHtmlPromise;
+  }
 
   let error;
   let results;
 
   try {
-    results = await Promise.all([storagePromise, contentHtmlPromise]);
+    results = await Promise.all([fetchStorage(), fetchContentHtml()]);
   } catch (err) {
     console.log(err);
     error = err;
@@ -103,7 +134,7 @@ export async function Issue({ issueId }: { issueId: string }) {
                   }
                 />
                 <div className="my-6">
-                  <IssueLinks storageFallback={storage} />
+                  <IssueLinks storageFallback={storage} issueId={issueId} />
                 </div>
                 <div className="border-t my-6" />
                 <Comments />
@@ -112,15 +143,17 @@ export async function Issue({ issueId }: { issueId: string }) {
           </div>
           <div className="border-l flex-grow-0 flex-shrink-0 w-[200px] lg:w-[260px] px-4 flex flex-col gap-4">
             <div>
-              <div className="text-xs font-medium text-neutral-600 mb-2 h-10 flex items-center">
-                Properties
+              <div className="text-xs font-medium text-neutral-600 mb-2 flex h-10 items-center justify-between gap-1">
+                <span>Properties</span>
+                <IssueAiButton kind="properties" issueId={issueId} />
               </div>
               <IssueProperties storageFallback={storage} />
             </div>
 
             <div>
-              <div className="text-xs font-medium text-neutral-600 mb-0 h-10 flex items-center">
-                Labels
+              <div className="text-xs font-medium text-neutral-600 mb-0 flex h-10 items-center justify-between gap-1">
+                <span>Labels</span>
+                <IssueAiButton kind="labels" issueId={issueId} />
               </div>
               <IssueLabels storageFallback={storage} />
             </div>

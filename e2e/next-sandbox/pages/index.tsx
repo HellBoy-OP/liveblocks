@@ -44,6 +44,12 @@ export default function Home() {
         </li>
 
         <li>
+          <Link href="/version-history?room=e2e-version-history&user=1">
+            Version history
+          </Link>
+        </li>
+
+        <li>
           <Link href="/offline?room=e2e-offline">Offline</Link>
         </li>
         <li>
@@ -150,6 +156,11 @@ export default function Home() {
         </li>
         <li>
           <Link href="/zustand?room=e2e-zustand">Zustand</Link>
+        </li>
+        <li>
+          <Link href="/zustand-kanban?room=e2e-zustand-kanban">
+            Zustand Kanban
+          </Link>
         </li>
 
         <hr />

@@ -10,7 +10,7 @@
 # TipTap Notifications Emails (Resend)
 
 <p>
-  <a href="https://liveblocks.io/examples/text-editor-emails/nextjs-tiptap-emails-resend">
+  <a href="https://liveblocks.io/examples/collaborative-text-editor-emails/nextjs-tiptap-emails-resend">
     <img src="https://img.shields.io/badge/live%20preview-message?style=flat&logo=data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTE2Ljg0OSA0Ljc1SDBsNC44NDggNS4wNzV2Ny4wMDhsMTItMTIuMDgzWk03LjE1IDE5LjI1SDI0bC00Ljg0OS01LjA3NVY3LjE2N2wtMTIgMTIuMDgzWiIgZmlsbD0iI2ZmZiIvPjwvc3ZnPg==&color=333" alt="Live Preview" />
   </a>
   <a href="https://codesandbox.io/s/github/liveblocks/liveblocks/tree/main/examples/nextjs-tiptap-emails-resend">
@@ -67,6 +67,24 @@ Alternatively, you can set up your project manually:
 - Create an `.env.local` file and add your **secret** key as the `LIVEBLOCKS_SECRET_KEY` environment variable
 - Run `npm run dev:email` and go to [http://localhost:3000](http://localhost:3000)
 - Run `npm run dev` and go to [http://localhost:3001](http://localhost:3001)
+
+</details>
+
+### Dev server setup
+
+<details><summary>Read more</summary>
+
+<p></p>
+
+You can optionally run this example locally using the
+[Liveblocks dev server](https://liveblocks.io/docs/tools/dev-server).
+
+- Install the example as detailed above
+- Run `npx liveblocks dev` to start the server
+- Add `baseUrl: "http://localhost:1153"` option to `LiveblocksProvider` and
+  `new Liveblocks`
+- Replace `secret` in `new Liveblocks` with `"sk_localdev"`
+- Run `npm run dev` and go to [http://localhost:3000](http://localhost:3000)
 
 </details>
 

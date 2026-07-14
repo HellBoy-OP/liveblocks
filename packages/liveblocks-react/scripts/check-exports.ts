@@ -22,6 +22,8 @@ const ALLOW_DIFFERENT_JSDOCS = [
   "useRoomInfo",
   "useSelf",
   "useThreads",
+  "useFeeds",
+  "useFeedMessages",
   "useUnreadInboxNotificationsCount",
   "useUser",
   "useGroupInfo",
@@ -67,7 +69,11 @@ const ALLOW_NO_FACTORY = [
 const CLASSIC_ONLY = [
   "createLiveblocksContext",
   "createRoomContext",
+  "useDeleteHistoryVersion",
   "useHistoryVersionData",
+  "useHistoryVersionStorageData",
+  "useHistoryVersionYjsData",
+  "useRestoreToStorageVersion",
   "useSearchComments",
 ];
 const SUSPENSE_ONLY = [];
@@ -373,6 +379,49 @@ for (const name of intersection(suspenseNames, classicNames)) {
       "Either fix this, or allow it by adding this symbol to ALLOW_DIFFERENT_JSDOCS."
     );
     console.warn();
+  }
+}
+
+// Ensure the bundle object in createRoomContext() always wires
+// _withBoundRoomContext versions (not the global hooks).
+{
+  const roomProject = new Project({ tsConfigFilePath: "tsconfig.json" });
+  const roomSource = roomProject.addSourceFileAtPath("src/room.tsx");
+  const fn = roomSource.getFunctionOrThrow("createRoomContext");
+  let hasIssue = false;
+
+  for (const prop of fn.getDescendantsOfKind(SyntaxKind.PropertyAssignment)) {
+    const key = prop.getName();
+    if (!key.startsWith("use")) continue;
+
+    const isSuspense = prop
+      .getAncestors()
+      .some((a) => Node.isPropertyAssignment(a) && a.getName() === "suspense");
+    const variant = isSuspense ? "suspense" : "classic";
+
+    let initializer = prop.getInitializerOrThrow();
+    if (Node.isAsExpression(initializer)) {
+      initializer = initializer.getExpression();
+    }
+
+    const value = initializer.getText();
+    if (!value.endsWith("_withBoundRoomContext")) {
+      hasIssue = true;
+      warn(
+        blue(key),
+        magenta(`[${variant}]`),
+        "is not using a",
+        yellow("_withBoundRoomContext"),
+        "version",
+        "⚠️"
+      );
+    }
+  }
+
+  if (hasIssue) {
+    console.warn(
+      `Hooks returned from ${blue("createRoomContext()")} should always use their bound room context.`
+    );
   }
 }
 

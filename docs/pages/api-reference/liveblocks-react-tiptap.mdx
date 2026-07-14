@@ -1017,6 +1017,7 @@ import { Composer } from "@liveblocks/react-ui/primitives";
               body: comment.body,
               attachments: comment.attachments,
               metadata: ...,
+              commentMetadata: ...,
             });
 
             editor.commands.addComment(thread.id);
@@ -1300,11 +1301,14 @@ import { Thread } from "@liveblocks/react-ui";
 ```
 
 You can return any custom `ReactNode` here, including anything from a simple
-wrapper around `Thread`, up to a full custom `Thread` component built using our
+wrapper around [`Thread`][]. You can also use [`Thread`][]'s
+[`components`](/docs/api-reference/liveblocks-react-ui#Thread-components) prop
+to customize individual comments, or build a fully custom `Thread` component
+using our
 [Comment primitives](/docs/api-reference/liveblocks-react-ui#primitives-Comment).
 
 ```tsx
-import { Comment } from "@liveblocks/react-ui/primitives";
+import { Comment, Thread } from "@liveblocks/react-ui";
 
 <FloatingThreads
   editor={editor}
@@ -1313,15 +1317,18 @@ import { Comment } from "@liveblocks/react-ui/primitives";
   components={{
     Thread: (props) => (
       // +++
-      <div>
-        {props.thread.comments.map((comment) => (
-          <Comment.Body
-            key={comment.id}
-            body={comment.body}
-            components={/* ... */}
-          />
-        ))}
-      </div>
+      <Thread
+        {...props}
+        components={{
+          Comment: ({ comment, ...commentProps }) => (
+            <Comment
+              comment={comment}
+              {/* Customize `Comment`'s props */}
+              {...commentProps}
+            />
+          ),
+        }}
+      />
       // +++
     ),
   }}
@@ -1563,11 +1570,14 @@ import { Thread } from "@liveblocks/react-ui";
 ```
 
 You can return any custom `ReactNode` here, including anything from a simple
-wrapper around `Thread`, up to a full custom `Thread` component built using our
+wrapper around [`Thread`][]. You can also use [`Thread`][]'s
+[`components`](/docs/api-reference/liveblocks-react-ui#Thread-components) prop
+to customize individual comments, or build a fully custom `Thread` component
+using our
 [Comment primitives](/docs/api-reference/liveblocks-react-ui#primitives-Comment).
 
 ```tsx
-import { Comment } from "@liveblocks/react-ui/primitives";
+import { Comment, Thread } from "@liveblocks/react-ui";
 
 <AnchoredThreads
   editor={editor}
@@ -1577,15 +1587,18 @@ import { Comment } from "@liveblocks/react-ui/primitives";
   components={{
     Thread: (props) => (
       // +++
-      <div>
-        {props.thread.comments.map((comment) => (
-          <Comment.Body
-            key={comment.id}
-            body={comment.body}
-            components={/* ... */}
-          />
-        ))}
-      </div>
+      <Thread
+        {...props}
+        components={{
+          Comment: ({ comment, ...commentProps }) => (
+            <Comment
+              comment={comment}
+              {/* Customize `Comment`'s props */}
+              {...commentProps}
+            />
+          ),
+        }}
+      />
       // +++
     ),
   }}
@@ -1634,6 +1647,8 @@ The `HistoryVersionPreview` component allows you to display a preview of a
 specific version of your Tiptap editor’s content. It also contains a button and
 logic for restoring. To render a list of versions, see
 [`VersionHistory`](/docs/api-reference/liveblocks-react-ui#Version-History).
+Learn how to set this up in our
+[version history guide](/docs/guides/how-to-add-version-history-to-your-app).
 
 #### Usage [#HistoryVersionPreview-usage]
 
@@ -1668,15 +1683,7 @@ The `HistoryVersionPreview` component renders a read-only view of the specified
 version of the editor content. It also provides a button for users to restore
 the displayed version.
 
-### AiToolbar [@badge=beta]
-
-<Banner title="Private beta">
-
-AI Copilots is currently in private beta. If you would like access to the beta,
-please [contact us](https://liveblocks.io/contact/sales). We’d love to hear from
-you.
-
-</Banner>
+### AiToolbar
 
 Displays a floating AI toolbar near the current Tiptap selection, allowing you
 to use AI to apply changes to the document or ask questions about it.
@@ -2167,15 +2174,7 @@ function Threads({ editor }: { editor: Editor }) {
 // +++
 ```
 
-#### Customizing AI components [@badge=beta]
-
-<Banner title="Private beta">
-
-AI Copilots is currently in private beta. If you would like access to the beta,
-please [contact us](https://liveblocks.io/contact/sales). We’d love to hear from
-you.
-
-</Banner>
+#### Customizing AI components
 
 By default, AI components like [`AiToolbar`][] use the term `"AI"`. This can be
 customized with the `ai.name` option in [`useLiveblocksExtension`][]. This value
@@ -2212,15 +2211,7 @@ If you’re after visual customization, AI components like [`AiToolbar`][]
 integrate with the rest of Liveblocks' styles, heavily using tokens like
 `--lb-accent` for example. Learn more about [styling](#Stylesheets).
 
-#### Generating AI toolbar responses [@badge=beta]
-
-<Banner title="Private beta">
-
-AI Copilots is currently in private beta. If you would like access to the beta,
-please [contact us](https://liveblocks.io/contact/sales). We’d love to hear from
-you.
-
-</Banner>
+#### Generating AI toolbar responses
 
 By default, the [`AiToolbar`][] component sends its requests to Liveblocks to
 generate its responses. This can be customized via the

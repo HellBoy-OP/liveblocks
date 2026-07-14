@@ -1,18 +1,27 @@
-import "@testing-library/jest-dom";
-
 import type {
   InboxNotificationData,
+  RoomPermissions,
   SubscriptionData,
   ThreadData,
   ThreadDataWithDeleteInfo,
 } from "@liveblocks/core";
 import { HttpError, nanoid, Permission } from "@liveblocks/core";
-import { fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
-import type { ResponseResolver, RestContext, RestRequest } from "msw";
-import { rest } from "msw";
+import { fireEvent, renderHook, screen } from "@testing-library/react";
+import type { HttpResponseResolver } from "msw";
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 
 import { dummySubscriptionData, dummyThreadData } from "./_dummies";
 import MockWebSocket from "./_MockWebSocket";
@@ -29,16 +38,16 @@ beforeEach(() => {
 afterEach(() => {
   MockWebSocket.reset();
   server.resetHandlers();
-  jest.clearAllTimers();
-  jest.clearAllMocks();
+  vi.clearAllTimers();
+  vi.clearAllMocks();
 });
 
 afterAll(() => server.close());
 
 function mockGetUserThreads(
-  resolver: ResponseResolver<
-    RestRequest<never, { roomId: string }>,
-    RestContext,
+  resolver: HttpResponseResolver<
+    { roomId: string },
+    never,
     {
       threads: ThreadData[];
       inboxNotifications: InboxNotificationData[];
@@ -46,18 +55,18 @@ function mockGetUserThreads(
       meta: {
         nextCursor: string | null;
         requestedAt: string;
-        permissionHints: Record<string, Permission[]>;
+        permissionHints: Record<string, RoomPermissions>;
       };
     }
   >
 ) {
-  return rest.get("https://api.liveblocks.io/v2/c/threads", resolver);
+  return http.get("https://api.liveblocks.io/v2/c/threads", resolver);
 }
 
 function mockGetUserThreadsDelta(
-  resolver: ResponseResolver<
-    RestRequest<never, { roomId: string }>,
-    RestContext,
+  resolver: HttpResponseResolver<
+    { roomId: string },
+    never,
     {
       threads: ThreadData[];
       inboxNotifications: InboxNotificationData[];
@@ -67,21 +76,21 @@ function mockGetUserThreadsDelta(
       deletedSubscriptions: SubscriptionData[];
       meta: {
         requestedAt: string; // ISO date
-        permissionHints: Record<string, Permission[]>;
+        permissionHints: Record<string, RoomPermissions>;
       };
     }
   >
 ) {
-  return rest.get("https://api.liveblocks.io/v2/c/threads/delta", resolver);
+  return http.get("https://api.liveblocks.io/v2/c/threads/delta", resolver);
 }
 
 describe("useUserThreads", () => {
   beforeAll(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterAll(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   test("should fetch user threads on mount", async () => {
@@ -92,21 +101,19 @@ describe("useUserThreads", () => {
     ];
 
     server.use(
-      mockGetUserThreads((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            threads,
-            inboxNotifications: [],
-            subscriptions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetUserThreads(() => {
+        return HttpResponse.json({
+          threads,
+          inboxNotifications: [],
+          subscriptions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       })
     );
 
@@ -127,7 +134,7 @@ describe("useUserThreads", () => {
       isLoading: true,
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads,
@@ -143,42 +150,41 @@ describe("useUserThreads", () => {
 
   test("should fetch user threads for given query on mount", async () => {
     const roomId = nanoid();
-    const pinnedThread = dummyThreadData({
+    const privatePinnedThread = dummyThreadData({
+      roomId,
+      visibility: "private",
+      metadata: {
+        pinned: true,
+      },
+    });
+    const publicPinnedThread = dummyThreadData({
       roomId,
       metadata: {
         pinned: true,
       },
     });
-    const unpinnedThread = dummyThreadData({
-      roomId,
-      metadata: {
-        pinned: false,
-      },
-    });
     const subscriptions = [
-      dummySubscriptionData({ subjectId: pinnedThread.id }),
-      dummySubscriptionData({ subjectId: unpinnedThread.id }),
+      dummySubscriptionData({ subjectId: privatePinnedThread.id }),
+      dummySubscriptionData({ subjectId: publicPinnedThread.id }),
     ];
 
     server.use(
-      mockGetUserThreads((req, res, ctx) => {
-        const url = new URL(req.url);
+      mockGetUserThreads(({ request }) => {
+        const url = new URL(request.url);
         const query = url.searchParams.get("query");
         const pred = query ? makeThreadFilter(query) : () => true;
-        return res(
-          ctx.json({
-            threads: [pinnedThread, unpinnedThread].filter(pred),
-            inboxNotifications: [],
-            subscriptions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+        return HttpResponse.json({
+          threads: [privatePinnedThread, publicPinnedThread].filter(pred),
+          inboxNotifications: [],
+          subscriptions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       })
     );
 
@@ -188,7 +194,9 @@ describe("useUserThreads", () => {
 
     const { result, unmount } = renderHook(
       () =>
-        useUserThreads_experimental({ query: { metadata: { pinned: true } } }),
+        useUserThreads_experimental({
+          query: { visibility: "private", metadata: { pinned: true } },
+        }),
       {
         wrapper: ({ children }) => (
           <LiveblocksProvider>{children}</LiveblocksProvider>
@@ -200,10 +208,10 @@ describe("useUserThreads", () => {
       isLoading: true,
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
-        threads: [pinnedThread],
+        threads: [privatePinnedThread],
         fetchMore: expect.any(Function),
         isFetchingMore: false,
         hasFetchedAll: true,
@@ -232,21 +240,19 @@ describe("useUserThreads", () => {
     ];
 
     server.use(
-      mockGetUserThreads((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            threads: [latestUpdatedThread, earliestUpdatedThread],
-            inboxNotifications: [],
-            subscriptions,
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetUserThreads(() => {
+        return HttpResponse.json({
+          threads: [latestUpdatedThread, earliestUpdatedThread],
+          inboxNotifications: [],
+          subscriptions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       })
     );
 
@@ -267,7 +273,7 @@ describe("useUserThreads", () => {
       isLoading: true,
     });
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [latestUpdatedThread, earliestUpdatedThread],
@@ -284,21 +290,21 @@ describe("useUserThreads", () => {
 
 describe("useThreads: error", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.clearAllTimers();
-    jest.useRealTimers(); // Restores the real timers
+    vi.clearAllTimers();
+    vi.useRealTimers(); // Restores the real timers
   });
 
   test("should trigger error boundary if initial fetch throws an error", async () => {
     let getThreadsReqCount = 0;
 
     server.use(
-      mockGetUserThreads((_req, res, ctx) => {
+      mockGetUserThreads(() => {
         getThreadsReqCount++;
-        return res(ctx.status(500));
+        return HttpResponse.json(null, { status: 500 });
       })
     );
 
@@ -318,26 +324,26 @@ describe("useThreads: error", () => {
     expect(result.current).toEqual({ isLoading: true });
 
     // Wait until all fetch attempts have been done
-    await jest.advanceTimersToNextTimerAsync(); // fetch attempt 1
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(1));
 
     // The first retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     // A new fetch request for the threads should have been made after the first retry
-    await waitFor(() => expect(getThreadsReqCount).toBe(2));
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(2));
 
     // The second retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(3));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(3));
 
     // The third retry should be made after 10s
-    await jest.advanceTimersByTimeAsync(10_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(4));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(4));
 
     // The fourth retry should be made after 15s
-    await jest.advanceTimersByTimeAsync(15_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(5));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(5));
 
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(result.current).toEqual({
         isLoading: false,
         error: expect.any(Error),
@@ -345,17 +351,17 @@ describe("useThreads: error", () => {
     });
 
     // Wait for 5 second for the error to clear
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     // A new fetch request for the threads should have been made after the initial render
-    await waitFor(() => expect(getThreadsReqCount).toBe(6));
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(6));
     expect(result.current).toEqual({
       isLoading: true,
     });
 
     // The first retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(7));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(7));
 
     // and so on...
 
@@ -364,9 +370,9 @@ describe("useThreads: error", () => {
 
   test("should not retry if a 403 Forbidden response is received from server", async () => {
     server.use(
-      mockGetUserThreads((_req, res, ctx) => {
+      mockGetUserThreads(() => {
         // Return a 403 status from the server for the initial fetch
-        return res(ctx.status(403));
+        return HttpResponse.json(null, { status: 403 });
       })
     );
 
@@ -385,7 +391,7 @@ describe("useThreads: error", () => {
 
     expect(result.current).toEqual({ isLoading: true });
 
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(result.current).toEqual({
         isLoading: false,
         error: expect.any(HttpError),
@@ -398,11 +404,11 @@ describe("useThreads: error", () => {
 
 describe("useThreadsSuspense", () => {
   beforeAll(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterAll(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   test("should fetch user threads on render", async () => {
@@ -413,24 +419,19 @@ describe("useThreadsSuspense", () => {
     ];
 
     server.use(
-      mockGetUserThreads(async (_req, res, ctx) => {
-        return res(
-          ctx.json({
-            threads,
-            inboxNotifications: [],
-            subscriptions,
-            deletedThreads: [],
-            deletedInboxNotifications: [],
-            deletedSubscriptions: [],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetUserThreads(() => {
+        return HttpResponse.json({
+          threads,
+          inboxNotifications: [],
+          subscriptions,
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       })
     );
 
@@ -453,7 +454,7 @@ describe("useThreadsSuspense", () => {
 
     expect(result.current).toEqual(null);
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads,
@@ -469,37 +470,35 @@ describe("useThreadsSuspense", () => {
 
 describe("useUserThreadsSuspense: error", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.clearAllTimers();
-    jest.useRealTimers(); // Restores the real timers
+    vi.clearAllTimers();
+    vi.useRealTimers(); // Restores the real timers
   });
 
   test("should trigger error boundary if initial fetch throws an error", async () => {
     let getThreadsReqCount = 0;
 
     server.use(
-      mockGetUserThreads((_req, res, ctx) => {
+      mockGetUserThreads(() => {
         getThreadsReqCount++;
-        return res(ctx.status(500));
+        return HttpResponse.json(null, { status: 500 });
       }),
-      mockGetUserThreadsDelta((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            threads: [],
-            inboxNotifications: [],
-            subscriptions: [],
-            deletedThreads: [],
-            deletedInboxNotifications: [],
-            deletedSubscriptions: [],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              permissionHints: {},
-            },
-          })
-        );
+      mockGetUserThreadsDelta(() => {
+        return HttpResponse.json({
+          threads: [],
+          inboxNotifications: [],
+          subscriptions: [],
+          deletedThreads: [],
+          deletedInboxNotifications: [],
+          deletedSubscriptions: [],
+          meta: {
+            requestedAt: new Date().toISOString(),
+            permissionHints: {},
+          },
+        });
       })
     );
 
@@ -536,40 +535,40 @@ describe("useUserThreadsSuspense: error", () => {
     expect(screen.getByText("Loading")).toBeInTheDocument();
 
     // Wait until all fetch attempts have been done
-    await jest.advanceTimersToNextTimerAsync(); // fetch attempt 1
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(1));
 
     // The first retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     // A new fetch request for the threads should have been made after the first retry
-    await waitFor(() => expect(getThreadsReqCount).toBe(2));
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(2));
 
     // The second retry should be made after 5s
-    await jest.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(3));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(3));
 
     // The third retry should be made after 10s
-    await jest.advanceTimersByTimeAsync(10_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(4));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(4));
 
     // The fourth retry should be made after 15s
-    await jest.advanceTimersByTimeAsync(15_000);
-    await waitFor(() => expect(getThreadsReqCount).toBe(5));
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(getThreadsReqCount).toBe(5));
 
     // Check if the error boundary's fallback is displayed
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(
         screen.getByText("There was an error while getting threads.")
       ).toBeInTheDocument();
     });
 
     // Wait until the error boundary auto-clears
-    await jest.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     // Simulate clicking the retry button
     fireEvent.click(screen.getByText("Retry"));
 
     // The error boundary's fallback should be cleared
-    await waitFor(() => {
+    await vi.waitFor(() => {
       expect(screen.getByText("Loading")).toBeInTheDocument();
     });
 
@@ -579,11 +578,11 @@ describe("useUserThreadsSuspense: error", () => {
 
 describe("useUserThreads: pagination", () => {
   beforeAll(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterAll(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   test("should load the next page of data when `fetchMore` is called", async () => {
@@ -612,63 +611,57 @@ describe("useUserThreads: pagination", () => {
     let isPageThreeRequested = false;
 
     server.use(
-      mockGetUserThreads((req, res, ctx) => {
-        const url = new URL(req.url);
+      mockGetUserThreads(({ request }) => {
+        const url = new URL(request.url);
         const cursor = url.searchParams.get("cursor");
 
         // Request for Page 2
         if (cursor === "cursor-1") {
           isPageTwoRequested = true;
-          return res(
-            ctx.json({
-              threads: threadsPageTwo,
-              inboxNotifications: [],
-              subscriptions: subscriptionsPageTwo,
-              meta: {
-                requestedAt: new Date().toISOString(),
-                nextCursor: "cursor-2",
-                permissionHints: {
-                  [roomId]: [Permission.Write],
-                },
+          return HttpResponse.json({
+            threads: threadsPageTwo,
+            inboxNotifications: [],
+            subscriptions: subscriptionsPageTwo,
+            meta: {
+              requestedAt: new Date().toISOString(),
+              nextCursor: "cursor-2",
+              permissionHints: {
+                [roomId]: [Permission.RoomWrite],
               },
-            })
-          );
+            },
+          });
         }
         // Request for Page 3
         else if (cursor === "cursor-2") {
           isPageThreeRequested = true;
-          return res(
-            ctx.json({
-              threads: threadsPageThree,
-              inboxNotifications: [],
-              subscriptions: subscriptionsPageThree,
-              meta: {
-                requestedAt: new Date().toISOString(),
-                nextCursor: "cursor-3",
-                permissionHints: {
-                  [roomId]: [Permission.Write],
-                },
+          return HttpResponse.json({
+            threads: threadsPageThree,
+            inboxNotifications: [],
+            subscriptions: subscriptionsPageThree,
+            meta: {
+              requestedAt: new Date().toISOString(),
+              nextCursor: "cursor-3",
+              permissionHints: {
+                [roomId]: [Permission.RoomWrite],
               },
-            })
-          );
+            },
+          });
         }
         // Request for Page 1
         else {
           isPageOneRequested = true;
-          return res(
-            ctx.json({
-              threads: threadsPageOne,
-              inboxNotifications: [],
-              subscriptions: subscriptionsPageOne,
-              meta: {
-                requestedAt: new Date().toISOString(),
-                nextCursor: "cursor-1",
-                permissionHints: {
-                  [roomId]: [Permission.Write],
-                },
+          return HttpResponse.json({
+            threads: threadsPageOne,
+            inboxNotifications: [],
+            subscriptions: subscriptionsPageOne,
+            meta: {
+              requestedAt: new Date().toISOString(),
+              nextCursor: "cursor-1",
+              permissionHints: {
+                [roomId]: [Permission.RoomWrite],
               },
-            })
-          );
+            },
+          });
         }
       })
     );
@@ -691,8 +684,8 @@ describe("useUserThreads: pagination", () => {
     });
 
     // Initial load (Page 1)
-    await waitFor(() => expect(isPageOneRequested).toBe(true));
-    await waitFor(() =>
+    await vi.waitFor(() => expect(isPageOneRequested).toBe(true));
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [...threadsPageOne],
@@ -707,8 +700,8 @@ describe("useUserThreads: pagination", () => {
 
     // Fetch Page 2
     fetchMore();
-    await waitFor(() => expect(isPageTwoRequested).toBe(true));
-    await waitFor(() =>
+    await vi.waitFor(() => expect(isPageTwoRequested).toBe(true));
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [...threadsPageOne, ...threadsPageTwo],
@@ -721,8 +714,8 @@ describe("useUserThreads: pagination", () => {
 
     // Fetch Page 3
     fetchMore();
-    await waitFor(() => expect(isPageThreeRequested).toBe(true));
-    await waitFor(() =>
+    await vi.waitFor(() => expect(isPageThreeRequested).toBe(true));
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [...threadsPageOne, ...threadsPageTwo, ...threadsPageThree],
@@ -755,45 +748,41 @@ describe("useUserThreads: pagination", () => {
     let isPageTwoRequested = false;
 
     server.use(
-      mockGetUserThreads((req, res, ctx) => {
-        const url = new URL(req.url);
+      mockGetUserThreads(({ request }) => {
+        const url = new URL(request.url);
         const cursor = url.searchParams.get("cursor");
 
         // Request for Page 2
         if (cursor === "cursor-1") {
           isPageTwoRequested = true;
-          return res(
-            ctx.json({
-              threads: threadsPageTwo,
-              inboxNotifications: [],
-              subscriptions: subscriptionsPageTwo,
-              meta: {
-                requestedAt: new Date().toISOString(),
-                nextCursor: null,
-                permissionHints: {
-                  [roomId]: [Permission.Write],
-                },
+          return HttpResponse.json({
+            threads: threadsPageTwo,
+            inboxNotifications: [],
+            subscriptions: subscriptionsPageTwo,
+            meta: {
+              requestedAt: new Date().toISOString(),
+              nextCursor: null,
+              permissionHints: {
+                [roomId]: [Permission.RoomWrite],
               },
-            })
-          );
+            },
+          });
         }
         // Request for Page 1
         else {
           isPageOneRequested = true;
-          return res(
-            ctx.json({
-              threads: threadsPageOne,
-              inboxNotifications: [],
-              subscriptions: subscriptionsPageOne,
-              meta: {
-                requestedAt: new Date().toISOString(),
-                nextCursor: "cursor-1",
-                permissionHints: {
-                  [roomId]: [Permission.Write],
-                },
+          return HttpResponse.json({
+            threads: threadsPageOne,
+            inboxNotifications: [],
+            subscriptions: subscriptionsPageOne,
+            meta: {
+              requestedAt: new Date().toISOString(),
+              nextCursor: "cursor-1",
+              permissionHints: {
+                [roomId]: [Permission.RoomWrite],
               },
-            })
-          );
+            },
+          });
         }
       })
     );
@@ -816,8 +805,8 @@ describe("useUserThreads: pagination", () => {
     });
 
     // Initial load (Page 1)
-    await waitFor(() => expect(isPageOneRequested).toBe(true));
-    await waitFor(() =>
+    await vi.waitFor(() => expect(isPageOneRequested).toBe(true));
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [...threadsPageOne],
@@ -832,8 +821,8 @@ describe("useUserThreads: pagination", () => {
 
     // Fetch Page 2
     fetchMore();
-    await waitFor(() => expect(isPageTwoRequested).toBe(true));
-    await waitFor(() =>
+    await vi.waitFor(() => expect(isPageTwoRequested).toBe(true));
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [...threadsPageOne, ...threadsPageTwo],
@@ -856,34 +845,29 @@ describe("useUserThreads: pagination", () => {
     let isPageTwoRequested = false;
 
     server.use(
-      mockGetUserThreads((req, res, ctx) => {
-        const url = new URL(req.url);
+      mockGetUserThreads(({ request }) => {
+        const url = new URL(request.url);
         const cursor = url.searchParams.get("cursor");
 
         // Initial load (Page 1)
         if (cursor === null) {
-          return res(
-            ctx.json({
-              threads: threadsPageOne,
-              inboxNotifications: [],
-              subscriptions: subscriptionsPageOne,
-              deletedThreads: [],
-              deletedInboxNotifications: [],
-              deletedSubscriptions: [],
-              meta: {
-                requestedAt: new Date().toISOString(),
-                nextCursor: "cursor-1",
-                permissionHints: {
-                  [roomId]: [Permission.Write],
-                },
+          return HttpResponse.json({
+            threads: threadsPageOne,
+            inboxNotifications: [],
+            subscriptions: subscriptionsPageOne,
+            meta: {
+              requestedAt: new Date().toISOString(),
+              nextCursor: "cursor-1",
+              permissionHints: {
+                [roomId]: [Permission.RoomWrite],
               },
-            })
-          );
+            },
+          });
         }
         // Page 2
         else {
           isPageTwoRequested = true;
-          return res(ctx.status(500));
+          return HttpResponse.json(null, { status: 500 });
         }
       })
     );
@@ -904,7 +888,7 @@ describe("useUserThreads: pagination", () => {
     expect(result.current).toEqual({ isLoading: true });
 
     // Initial load (Page 1)
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: [...threadsPageOne],
@@ -920,8 +904,8 @@ describe("useUserThreads: pagination", () => {
     // Fetch Page 2 (which returns an error)
     fetchMore();
 
-    await waitFor(() => expect(isPageTwoRequested).toBe(true));
-    await waitFor(() =>
+    await vi.waitFor(() => expect(isPageTwoRequested).toBe(true));
+    await vi.waitFor(() =>
       expect(result.current).toEqual({
         isLoading: false,
         threads: threadsPageOne,

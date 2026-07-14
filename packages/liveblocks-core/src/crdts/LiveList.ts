@@ -1,11 +1,13 @@
 import { nn } from "../lib/assert";
+import { freeze } from "../lib/freeze";
 import { nanoid } from "../lib/nanoid";
 import type { Pos } from "../lib/position";
 import { asPos, makePosition } from "../lib/position";
+import { SortedList } from "../lib/SortedList";
 import type { ClientWireOp, CreateListOp, CreateOp, Op } from "../protocol/Op";
 import { OpCode } from "../protocol/Op";
-import type { IdTuple, SerializedList } from "../protocol/SerializedCrdt";
-import { CrdtType } from "../protocol/SerializedCrdt";
+import type { ListStorageNode, SerializedList } from "../protocol/StorageNode";
+import { CrdtType } from "../protocol/StorageNode";
 import type * as DevTools from "../types/DevToolsTreeNode";
 import type { ParentToChildNodeMap } from "../types/NodeMap";
 import type { ApplyResult, ManagedPool } from "./AbstractCrdt";
@@ -17,8 +19,7 @@ import {
   lsonToLiveNode,
 } from "./liveblocks-helpers";
 import { LiveRegister } from "./LiveRegister";
-import type { LiveNode, Lson } from "./Lson";
-import type { ToImmutable } from "./utils";
+import type { LiveNode, Lson, ToJson } from "./Lson";
 
 export type LiveListUpdateDelta =
   | { type: "insert"; index: number; item: Lson }
@@ -36,40 +37,36 @@ export type LiveListUpdates<TItem extends Lson> = {
   updates: LiveListUpdateDelta[];
 };
 
-function compareNodePosition(itemA: LiveNode, itemB: LiveNode) {
-  const posA = itemA._parentPos;
-  const posB = itemB._parentPos;
-  return posA === posB ? 0 : posA < posB ? -1 : 1;
+function childNodeLt(a: LiveNode, b: LiveNode): boolean {
+  return a._parentPos < b._parentPos;
 }
 
 /**
  * The LiveList class represents an ordered collection of items that is synchronized across clients.
  */
 export class LiveList<TItem extends Lson> extends AbstractCrdt {
-  // TODO: Naive array at first, find a better data structure. Maybe an Order statistics tree?
-  #items: LiveNode[];
+  #items: SortedList<LiveNode>;
   #implicitlyDeletedItems: WeakSet<LiveNode>;
-  #unacknowledgedSets: Map<string, string>;
 
   constructor(items: TItem[]) {
     super();
-    this.#items = [];
     this.#implicitlyDeletedItems = new WeakSet();
-    this.#unacknowledgedSets = new Map();
 
-    let position = undefined;
+    const nodes: LiveNode[] = [];
+    let lastPos: Pos | undefined;
     for (const item of items) {
-      const newPosition = makePosition(position);
+      const pos = makePosition(lastPos);
       const node = lsonToLiveNode(item);
-      node._setParentLink(this, newPosition);
-      this.#items.push(node);
-      position = newPosition;
+      node._setParentLink(this, pos);
+      nodes.push(node);
+      lastPos = pos;
     }
+    this.#items = SortedList.fromAlreadySorted(nodes, childNodeLt);
   }
 
   /** @internal */
   static _deserialize(
-    [id]: IdTuple<SerializedList>,
+    [id, _]: ListStorageNode,
     parentToChildren: ParentToChildNodeMap,
     pool: ManagedPool
   ): LiveList<Lson> {
@@ -81,11 +78,12 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       return list;
     }
 
-    for (const [id, crdt] of children) {
-      const child = deserialize([id, crdt], parentToChildren, pool);
+    for (const node of children) {
+      const crdt = node[1];
+      const child = deserialize(node, parentToChildren, pool);
 
       child._setParentLink(list, crdt.parentKey);
-      list._insertAndSort(child);
+      list.#insert(child);
     }
 
     return list;
@@ -93,12 +91,13 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
   /**
    * @internal
-   * This function assumes that the resulting ops will be sent to the server if they have an 'opId'
-   * so we mutate _unacknowledgedSets to avoid potential flickering
-   * https://github.com/liveblocks/liveblocks/pull/1177
+   * Serializes this list (and its children) into Create ops. Each child's
+   * create is tagged with the "set" intent (in the loop below) so that a list
+   * created and immediately mutated doesn't transiently re-show its initial
+   * items (flicker, https://github.com/liveblocks/liveblocks/pull/1177).
    *
-   * This is quite unintuitive and should disappear as soon as
-   * we introduce an explicit LiveList.Set operation
+   * This is quite unintuitive and should disappear as soon as we introduce an
+   * explicit LiveList.Set operation.
    */
   _toOps(parentId: string, parentKey: string): CreateOp[] {
     if (this._id === undefined) {
@@ -117,30 +116,51 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
     for (const item of this.#items) {
       const parentKey = item._getParentKeyOrThrow();
-      const childOps = HACK_addIntentAndDeletedIdToOperation(
+      // Tag each child's create with "set" (no deletedId, since nothing
+      // specific is being replaced). This routes the ack through the set path
+      // so a list created and immediately mutated doesn't transiently re-show
+      // its initial items (to avoid flicker, see PR 1177).
+      const childOps = addIntentToRootOp(
         item._toOps(this._id, parentKey),
-        undefined
+        "set"
       );
-      ops.push(...childOps);
+      for (const childOp of childOps) {
+        ops.push(childOp);
+      }
     }
 
     return ops;
   }
 
   /**
-   * @internal
-   *
-   * Adds a new item into the sorted list, in the correct position.
+   * Inserts a new child into the list in the correct location (binary search
+   * finds correct position efficiently). Returns the insertion index.
    */
-  _insertAndSort(item: LiveNode): void {
-    this.#items.push(item);
-    this._sortItems();
+  #insert(childNode: LiveNode): number {
+    const index = this.#items.add(childNode);
+    this.invalidate();
+    return index;
   }
 
-  /** @internal */
-  _sortItems(): void {
-    this.#items.sort(compareNodePosition);
+  /**
+   * Updates an item's position and repositions it in the sorted list.
+   * Encapsulates the remove -> mutate -> add cycle needed when changing sort keys.
+   *
+   * IMPORTANT: Item must exist in this list. List count remains unchanged.
+   */
+  #updateItemPosition(item: LiveNode, newKey: string): void {
+    item._setParentLink(this, newKey);
+    this.#items.reposition(item);
     this.invalidate();
+  }
+
+  /**
+   * Updates an item's position by index. Safer than #updateItemPosition when you have
+   * an index, as it ensures the item exists and is from this list.
+   */
+  #updateItemPositionAt(index: number, newKey: string): void {
+    const item = nn(this.#items.at(index));
+    this.#updateItemPosition(item, newKey);
   }
 
   /** @internal */
@@ -148,6 +168,30 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
     return this.#items.findIndex(
       (item) => item._getParentKeyOrThrow() === position
     );
+  }
+
+  /**
+   * The opId of this list's still-unacknowledged "set" op at the given position,
+   * or undefined if none. Derived from the room's unacknowledgedOps (the single
+   * source of truth) rather than tracked in a per-instance map. The pool's
+   * position index already scopes to this list's (parentId, position); the last
+   * match wins, matching the original last-write-wins map semantics.
+   */
+  #unacknowledgedSetOpIdAt(position: string): string | undefined {
+    if (this._pool === undefined || this._id === undefined) {
+      return undefined;
+    }
+
+    let opId: string | undefined;
+    for (const op of this._pool.unacknowledgedOps.getByParentIdAndKey(
+      this._id,
+      position
+    )) {
+      if (op.intent === "set") {
+        opId = op.opId;
+      }
+    }
+    return opId;
   }
 
   /** @internal */
@@ -184,14 +228,16 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
     // If there is already an item at this position
     if (indexOfItemWithSamePosition !== -1) {
-      const itemWithSamePosition = this.#items[indexOfItemWithSamePosition];
+      const itemWithSamePosition = nn(
+        this.#items.removeAt(indexOfItemWithSamePosition)
+      );
 
       // No conflict, the item that is being replaced is the same that was deleted on the sender
       if (itemWithSamePosition._id === deletedId) {
         itemWithSamePosition._detach();
 
-        // Replace the existing item with the newly created item without sorting the list
-        this.#items[indexOfItemWithSamePosition] = child;
+        // Replace the existing item with the newly created item
+        this.#items.add(child);
 
         return {
           modified: makeUpdate(this, [
@@ -207,7 +253,8 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         this.#implicitlyDeletedItems.add(itemWithSamePosition);
 
         // Replace the existing item with the newly created item without sorting the list
-        this.#items[indexOfItemWithSamePosition] = child;
+        this.#items.remove(itemWithSamePosition);
+        this.#items.add(child);
 
         const delta: LiveListUpdateDelta[] = [
           setDelta(indexOfItemWithSamePosition, child),
@@ -238,7 +285,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         updates.push(deleteDelta);
       }
 
-      this._insertAndSort(child);
+      this.#insert(child);
 
       updates.push(insertDelta(this._indexOfPosition(key), child));
 
@@ -262,16 +309,19 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       delta.push(deletedDelta);
     }
 
-    const unacknowledgedOpId = this.#unacknowledgedSets.get(op.parentKey);
-
-    if (unacknowledgedOpId !== undefined) {
-      if (unacknowledgedOpId !== op.opId) {
-        return delta.length === 0
-          ? { modified: false }
-          : { modified: makeUpdate(this, delta), reverse: [] };
-      } else {
-        this.#unacknowledgedSets.delete(op.parentKey);
-      }
+    // If a *different* set op is still pending at this position, our optimistic
+    // state is newer than this (now-stale) ack, so keep ours and ignore it.
+    // (Nothing to clear on a match: the room already removed op.opId from
+    // unacknowledgedOps before dispatching this ack, so this lookup returns
+    // undefined for the op being acked and only ever surfaces a *newer* pending
+    // set. This assumes acks for a single position arrive in dispatch order,
+    // which holds: one client sends them sequentially and the server preserves
+    // that order.)
+    const unacknowledgedOpId = this.#unacknowledgedSetOpIdAt(op.parentKey);
+    if (unacknowledgedOpId !== undefined && unacknowledgedOpId !== op.opId) {
+      return delta.length === 0
+        ? { modified: false }
+        : { modified: makeUpdate(this, delta), reverse: [] };
     }
 
     const indexOfItemWithSamePosition = this._indexOfPosition(op.parentKey);
@@ -291,19 +341,16 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
       // Item exists but not at the right position (local move after set)
       if (indexOfItemWithSamePosition !== -1) {
-        this.#implicitlyDeletedItems.add(
-          this.#items[indexOfItemWithSamePosition]
+        const itemAtPosition = nn(
+          this.#items.removeAt(indexOfItemWithSamePosition)
         );
-        const [prevNode] = this.#items.splice(indexOfItemWithSamePosition, 1);
-        delta.push(deleteDelta(indexOfItemWithSamePosition, prevNode));
+        this.#implicitlyDeletedItems.add(itemAtPosition);
+        delta.push(deleteDelta(indexOfItemWithSamePosition, itemAtPosition));
       }
 
-      const prevIndex = this.#items.indexOf(existingItem);
-
-      existingItem._setParentLink(this, op.parentKey);
-      this._sortItems();
-
-      const newIndex = this.#items.indexOf(existingItem);
+      const prevIndex = this.#items.findIndex((item) => item === existingItem);
+      this.#updateItemPosition(existingItem, op.parentKey);
+      const newIndex = this.#items.findIndex((item) => item === existingItem);
       if (newIndex !== prevIndex) {
         delta.push(moveDelta(prevIndex, newIndex, existingItem));
       }
@@ -321,10 +368,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         // And delete it from the orphan cache
         this.#implicitlyDeletedItems.delete(orphan);
 
-        this._insertAndSort(orphan);
-
-        const recreatedItemIndex = this.#items.indexOf(orphan);
-
+        const recreatedItemIndex = this.#insert(orphan);
         return {
           modified: makeUpdate(this, [
             // If there is an item at this position, update is a set, else it's an insert
@@ -337,7 +381,10 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         };
       } else {
         if (indexOfItemWithSamePosition !== -1) {
-          this.#items.splice(indexOfItemWithSamePosition, 1);
+          const displaced = nn(
+            this.#items.removeAt(indexOfItemWithSamePosition)
+          );
+          this.#implicitlyDeletedItems.add(displaced);
         }
 
         const { newItem, newIndex } = this.#createAttachItemAndSort(
@@ -398,11 +445,113 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
     const { newItem, newIndex } = this.#createAttachItemAndSort(op, key);
 
-    // TODO: add move update?
+    // A new remote sibling just landed among our items, so our still-unacked
+    // pushes may need bumping back to the tail. This is the only place that
+    // bumps: a remote insert or push is the only op that drops a *new* sibling
+    // into the list. Remote sets/moves are computed by the other client against
+    // a view that excludes our still-unacked pushes, so they can't address a
+    // position inside our pending tail block.
+    //
+    // The bump is a purely-local anti-flicker prediction of where the server
+    // will place things. It's sound because #unackedPushNodes only yields ops
+    // the server has provably not processed yet (ops whose fate became
+    // unknown in a disconnect are excluded at that source).
+    const bumpDeltas = this.#bumpUnackedPushesAbove(key);
+
     return {
-      modified: makeUpdate(this, [insertDelta(newIndex, newItem)]),
+      modified: makeUpdate(this, [
+        insertDelta(newIndex, newItem),
+        ...bumpDeltas,
+      ]),
       reverse: [],
     };
+  }
+
+  /**
+   * This list's own still-unacknowledged pushed items (their `intent: "push"`
+   * Create op is still pending in the room's unacknowledgedOps). Derived from
+   * the single source of truth, so an item drops out the instant its op is
+   * acked, with no per-instance membership to leak. Yielded in push order.
+   *
+   * Excludes ops that may already be stored on the server (they were in
+   * flight when a connection died, so their fate is unknown): the bump
+   * prediction assumes the server has not processed the op yet, which is only
+   * guaranteed for ops sent on the current connection. For these excluded
+   * ops, the server's (re-)ack states the authoritative position; predicting
+   * locally could produce a wrong position that no ack would correct.
+   *
+   * Restricted to items currently in `#items`: a pushed node whose op is still
+   * pending may have been pulled out of the list (e.g. implicitly deleted by a
+   * remote set, or removed by an undo) while still living in the pool, and such
+   * a node must not be repositioned.
+   */
+  *#unackedPushNodes(): Iterable<LiveNode> {
+    if (this._pool === undefined || this._id === undefined) {
+      return;
+    }
+
+    for (const op of this._pool.unacknowledgedOps.getByParentId(this._id)) {
+      if (op.intent !== "push") {
+        continue;
+      }
+      if (this._pool.unacknowledgedOps.isPossiblyStored(op.opId)) {
+        continue;
+      }
+      const node = this._pool.getNode(op.id);
+      if (node !== undefined && this.#items.includes(node)) {
+        yield node;
+      }
+    }
+  }
+
+  /**
+   * Optimistic no-flip for pushed items. When a remote op lands at or below my
+   * still-unacked pushed items, those items must end up *after* it: FIFO plus
+   * the room's serial processing guarantee the remote was processed first, so
+   * my unacked pushes belong behind it. Re-chain the whole unacked-push block,
+   * in push order, to sit after the highest confirmed sibling, so it keeps
+   * rendering as a contiguous tail instead of getting interleaved. Local-only;
+   * the real acks overwrite these keys with the (identical) server keys.
+   */
+  #bumpUnackedPushesAbove(remoteKey: Pos): LiveListUpdateDelta[] {
+    const pending = new Set(this.#unackedPushNodes());
+    if (pending.size === 0) {
+      return [];
+    }
+
+    // Only bump when the remote intruded into (at or below) the pending block.
+    // If it sorts entirely below, the block already renders above it.
+    let minPending: Pos | undefined;
+    for (const node of pending) {
+      const pos = node._parentPos;
+      if (minPending === undefined || pos < minPending) {
+        minPending = pos;
+      }
+    }
+    if (remoteKey < nn(minPending)) {
+      return [];
+    }
+
+    // Highest confirmed (non-pending) key. `#items` is sorted ascending, so the
+    // last non-pending item we see is the max.
+    let base: Pos | undefined;
+    for (const item of this.#items) {
+      if (!pending.has(item)) {
+        base = item._parentPos;
+      }
+    }
+
+    const deltas: LiveListUpdateDelta[] = [];
+    for (const node of pending) {
+      const previousIndex = this.#items.findIndex((item) => item === node);
+      base = makePosition(base);
+      this.#updateItemPosition(node, base);
+      const index = this.#items.findIndex((item) => item === node);
+      if (index !== previousIndex) {
+        deltas.push(moveDelta(previousIndex, index, node));
+      }
+    }
+    return deltas;
   }
 
   #applyInsertAck(op: CreateOp): ApplyResult {
@@ -418,13 +567,14 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
           modified: false,
         };
       } else {
-        const oldPositionIndex = this.#items.indexOf(existingItem);
+        const oldPositionIndex = this.#items.findIndex(
+          (item) => item === existingItem
+        );
         if (itemIndexAtPosition !== -1) {
           this.#shiftItemPosition(itemIndexAtPosition, key);
         }
 
-        existingItem._setParentLink(this, key);
-        this._sortItems();
+        this.#updateItemPosition(existingItem, key);
 
         const newIndex = this._indexOfPosition(key);
 
@@ -446,7 +596,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         orphan._setParentLink(this, key);
         this.#implicitlyDeletedItems.delete(orphan);
 
-        this._insertAndSort(orphan);
+        this.#insert(orphan);
 
         const newIndex = this._indexOfPosition(key);
 
@@ -485,14 +635,14 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
     let newKey = key;
 
     if (existingItemIndex !== -1) {
-      const before = this.#items[existingItemIndex]?._parentPos;
-      const after = this.#items[existingItemIndex + 1]?._parentPos;
+      const before = this.#items.at(existingItemIndex)?._parentPos;
+      const after = this.#items.at(existingItemIndex + 1)?._parentPos;
 
       newKey = makePosition(before, after);
       child._setParentLink(this, newKey);
     }
 
-    this._insertAndSort(child);
+    this.#insert(child);
 
     const newIndex = this._indexOfPosition(newKey);
 
@@ -510,8 +660,6 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       return { modified: false };
     }
 
-    this.#unacknowledgedSets.set(key, nn(op.opId));
-
     const indexOfItemWithSameKey = this._indexOfPosition(key);
 
     child._attach(id, nn(this._pool));
@@ -522,13 +670,15 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
     // If there is already an item at this position
     if (indexOfItemWithSameKey !== -1) {
       // TODO: Should we add this item to implictly deleted item?
-      const existingItem = this.#items[indexOfItemWithSameKey];
+      const existingItem = this.#items.at(indexOfItemWithSameKey)!; // eslint-disable-line no-restricted-syntax
       existingItem._detach();
 
-      this.#items[indexOfItemWithSameKey] = child;
+      this.#items.remove(existingItem);
+      this.#items.add(child);
 
-      const reverse = HACK_addIntentAndDeletedIdToOperation(
+      const reverse = addIntentToRootOp(
         existingItem._toOps(nn(this._id), key),
+        "set",
         op.id
       );
 
@@ -545,7 +695,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         reverse,
       };
     } else {
-      this._insertAndSort(child);
+      this.#insert(child);
 
       // TODO: Use delta
       this.#detachItemAssociatedToSetOperation(op.deletedId);
@@ -600,7 +750,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       const parentKey = nn(child._parentKey);
       const reverse = child._toOps(nn(this._id), parentKey);
 
-      const indexToDelete = this.#items.indexOf(child);
+      const indexToDelete = this.#items.findIndex((item) => item === child);
 
       if (indexToDelete === -1) {
         return {
@@ -608,7 +758,8 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         };
       }
 
-      const [previousNode] = this.#items.splice(indexToDelete, 1);
+      const previousNode = this.#items.at(indexToDelete)!; // eslint-disable-line no-restricted-syntax
+      this.#items.remove(child);
       this.invalidate();
 
       child._detach();
@@ -627,12 +778,9 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       this.#implicitlyDeletedItems.delete(child);
 
       child._setParentLink(this, newKey);
-      this._insertAndSort(child);
-
-      const newIndex = this.#items.indexOf(child);
+      const newIndex = this.#insert(child);
 
       // TODO: Shift existing item?
-
       return {
         modified: makeUpdate(this, [insertDelta(newIndex, child)]),
         reverse: [],
@@ -652,10 +800,9 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
     // Normal case
     if (existingItemIndex === -1) {
-      const previousIndex = this.#items.indexOf(child);
-      child._setParentLink(this, newKey);
-      this._sortItems();
-      const newIndex = this.#items.indexOf(child);
+      const previousIndex = this.#items.findIndex((item) => item === child);
+      this.#updateItemPosition(child, newKey);
+      const newIndex = this.#items.findIndex((item) => item === child);
 
       if (newIndex === previousIndex) {
         return {
@@ -668,15 +815,14 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         reverse: [],
       };
     } else {
-      this.#items[existingItemIndex]._setParentLink(
-        this,
-        makePosition(newKey, this.#items[existingItemIndex + 1]?._parentPos)
+      this.#updateItemPositionAt(
+        existingItemIndex,
+        makePosition(newKey, this.#items.at(existingItemIndex + 1)?._parentPos)
       );
 
-      const previousIndex = this.#items.indexOf(child);
-      child._setParentLink(this, newKey);
-      this._sortItems();
-      const newIndex = this.#items.indexOf(child);
+      const previousIndex = this.#items.findIndex((item) => item === child);
+      this.#updateItemPosition(child, newKey);
+      const newIndex = this.#items.findIndex((item) => item === child);
 
       if (newIndex === previousIndex) {
         return {
@@ -700,16 +846,19 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       this.#implicitlyDeletedItems.delete(child);
 
       if (existingItemIndex !== -1) {
-        this.#items[existingItemIndex]._setParentLink(
+        const existingItem = this.#items.at(existingItemIndex)!; // eslint-disable-line no-restricted-syntax
+        existingItem._setParentLink(
           this,
-          makePosition(newKey, this.#items[existingItemIndex + 1]?._parentPos)
+          makePosition(
+            newKey,
+            this.#items.at(existingItemIndex + 1)?._parentPos
+          )
         );
+        this.#items.reposition(existingItem);
       }
 
       child._setParentLink(this, newKey);
-      this._insertAndSort(child);
-
-      const newIndex = this.#items.indexOf(child);
+      const newIndex = this.#insert(child);
       return {
         modified: makeUpdate(this, [insertDelta(newIndex, child)]),
         reverse: [],
@@ -724,21 +873,23 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       // At this point, it means that the item has been moved before receiving the ack
       // so we replace it at the right position
 
-      const previousIndex = this.#items.indexOf(child);
+      const previousIndex = this.#items.findIndex((item) => item === child);
 
       const existingItemIndex = this._indexOfPosition(newKey);
 
       if (existingItemIndex !== -1) {
-        this.#items[existingItemIndex]._setParentLink(
-          this,
-          makePosition(newKey, this.#items[existingItemIndex + 1]?._parentPos)
+        this.#updateItemPositionAt(
+          existingItemIndex,
+          makePosition(
+            newKey,
+            this.#items.at(existingItemIndex + 1)?._parentPos
+          )
         );
       }
 
-      child._setParentLink(this, newKey);
-      this._sortItems();
+      this.#updateItemPosition(child, newKey);
 
-      const newIndex = this.#items.indexOf(child);
+      const newIndex = this.#items.findIndex((item) => item === child);
 
       if (previousIndex === newIndex) {
         // parentKey changed but final position in the list didn't
@@ -759,7 +910,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
   #applySetChildKeyUndoRedo(newKey: Pos, child: LiveNode): ApplyResult {
     const previousKey = nn(child._parentKey);
 
-    const previousIndex = this.#items.indexOf(child);
+    const previousIndex = this.#items.findIndex((item) => item === child);
     const existingItemIndex = this._indexOfPosition(newKey);
 
     // If position is occupied, find a free position for item being moved
@@ -768,15 +919,13 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       // Find a free position near the desired position
       actualNewKey = makePosition(
         newKey,
-        this.#items[existingItemIndex + 1]?._parentPos
+        this.#items.at(existingItemIndex + 1)?._parentPos
       );
     }
 
-    child._setParentLink(this, actualNewKey);
+    this.#updateItemPosition(child, actualNewKey);
 
-    this._sortItems();
-
-    const newIndex = this.#items.indexOf(child);
+    const newIndex = this.#items.findIndex((item) => item === child);
 
     if (previousIndex === newIndex) {
       return {
@@ -837,8 +986,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @param element The element to add to the end of the LiveList.
    */
   push(element: TItem): void {
-    this._pool?.assertStorageIsWritable();
-    return this.insert(element, this.length);
+    return this.#injectAt(element, this.length, "push");
   }
 
   /**
@@ -847,6 +995,16 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @param index The index at which you want to insert the element.
    */
   insert(element: TItem, index: number): void {
+    return this.#injectAt(element, index, "insert");
+  }
+
+  /**
+   * Shared implementation of `insert` and `push`. A `"push"` intent leaves the
+   * client-computed position untouched (so optimistic rendering is unchanged),
+   * but tags the Op so the server appends it to the true end of the list
+   * instead of resolving its position against the client's stale view.
+   */
+  #injectAt(element: TItem, index: number, intent: "insert" | "push"): void {
     this._pool?.assertStorageIsWritable();
     if (index < 0 || index > this.#items.length) {
       throw new Error(
@@ -854,26 +1012,23 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       );
     }
 
-    const before = this.#items[index - 1]
-      ? this.#items[index - 1]._parentPos
-      : undefined;
-    const after = this.#items[index]
-      ? this.#items[index]._parentPos
-      : undefined;
+    const before = this.#items.at(index - 1)?._parentPos;
+    const after = this.#items.at(index)?._parentPos;
 
     const position = makePosition(before, after);
 
     const value = lsonToLiveNode(element);
     value._setParentLink(this, position);
 
-    this._insertAndSort(value);
+    this.#insert(value);
 
     if (this._pool && this._id) {
       const id = this._pool.generateId();
       value._attach(id, this._pool);
 
+      const ops = value._toOpsWithOpId(this._id, position, this._pool);
       this._pool.dispatch(
-        value._toOpsWithOpId(this._id, position, this._pool),
+        intent === "push" ? addIntentToRootOp(ops, "push") : ops,
         [{ type: OpCode.DELETE_CRDT, id }],
         new Map<string, LiveListUpdates<TItem>>([
           [this._id, makeUpdate(this, [insertDelta(index, value)])],
@@ -914,20 +1069,21 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       afterPosition =
         targetIndex === this.#items.length - 1
           ? undefined
-          : this.#items[targetIndex + 1]._parentPos;
-      beforePosition = this.#items[targetIndex]._parentPos;
+          : this.#items.at(targetIndex + 1)?._parentPos;
+      beforePosition = this.#items.at(targetIndex)!._parentPos; // eslint-disable-line no-restricted-syntax
     } else {
-      afterPosition = this.#items[targetIndex]._parentPos;
+      afterPosition = this.#items.at(targetIndex)!._parentPos; // eslint-disable-line no-restricted-syntax
       beforePosition =
-        targetIndex === 0 ? undefined : this.#items[targetIndex - 1]._parentPos;
+        targetIndex === 0
+          ? undefined
+          : this.#items.at(targetIndex - 1)?._parentPos;
     }
 
     const position = makePosition(beforePosition, afterPosition);
 
-    const item = this.#items[index];
+    const item = this.#items.at(index)!; // eslint-disable-line no-restricted-syntax
     const previousPosition = item._getParentKeyOrThrow();
-    item._setParentLink(this, position);
-    this._sortItems();
+    this.#updateItemPositionAt(index, position);
 
     if (this._pool && this._id) {
       const storageUpdates = new Map<string, LiveListUpdates<TItem>>([
@@ -969,9 +1125,9 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       );
     }
 
-    const item = this.#items[index];
+    const item = this.#items.at(index)!; // eslint-disable-line no-restricted-syntax
     item._detach();
-    const [prev] = this.#items.splice(index, 1);
+    this.#items.remove(item);
     this.invalidate();
 
     if (this._pool) {
@@ -980,7 +1136,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         const storageUpdates = new Map<string, LiveListUpdates<TItem>>();
         storageUpdates.set(
           nn(this._id),
-          makeUpdate(this, [deleteDelta(index, prev)])
+          makeUpdate(this, [deleteDelta(index, item)])
         );
 
         this._pool.dispatch(
@@ -1025,7 +1181,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
         }
       }
 
-      this.#items = [];
+      this.#items.clear();
       this.invalidate();
 
       const storageUpdates = new Map<string, LiveListUpdates<TItem>>();
@@ -1036,7 +1192,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       for (const item of this.#items) {
         item._detach();
       }
-      this.#items = [];
+      this.#items.clear();
       this.invalidate();
     }
   }
@@ -1051,7 +1207,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       );
     }
 
-    const existingItem = this.#items[index];
+    const existingItem = this.#items.at(index)!; // eslint-disable-line no-restricted-syntax
     const position = existingItem._getParentKeyOrThrow();
 
     const existingId = existingItem._id;
@@ -1059,7 +1215,8 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
 
     const value = lsonToLiveNode(item);
     value._setParentLink(this, position);
-    this.#items[index] = value;
+    this.#items.remove(existingItem);
+    this.#items.add(value);
     this.invalidate();
 
     if (this._pool && this._id) {
@@ -1069,13 +1226,14 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
       const storageUpdates = new Map<string, LiveListUpdates<TItem>>();
       storageUpdates.set(this._id, makeUpdate(this, [setDelta(index, value)]));
 
-      const ops = HACK_addIntentAndDeletedIdToOperation(
+      const ops = addIntentToRootOp(
         value._toOpsWithOpId(this._id, position, this._pool),
+        "set",
         existingId
       );
-      this.#unacknowledgedSets.set(position, nn(ops[0].opId));
-      const reverseOps = HACK_addIntentAndDeletedIdToOperation(
+      const reverseOps = addIntentToRootOp(
         existingItem._toOps(this._id, position),
+        "set",
         id
       );
 
@@ -1083,15 +1241,8 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
     }
   }
 
-  /**
-   * Returns an Array of all the elements in the LiveList.
-   */
-  toArray(): TItem[] {
-    return this.#items.map(
-      (entry) => liveNodeToLson(entry) as TItem
-      //                               ^^^^^^^^
-      //                               FIXME! This isn't safe.
-    );
+  #unwrap(node: LiveNode): TItem {
+    return liveNodeToLson(node) as TItem;
   }
 
   /**
@@ -1100,7 +1251,9 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns true if the predicate function returns a truthy value for every element. Otherwise, false.
    */
   every(predicate: (value: TItem, index: number) => unknown): boolean {
-    return this.toArray().every(predicate);
+    return this.#items.rawArray.every((node, i) =>
+      predicate(this.#unwrap(node), i)
+    );
   }
 
   /**
@@ -1109,7 +1262,12 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns An array with the elements that pass the test.
    */
   filter(predicate: (value: TItem, index: number) => unknown): TItem[] {
-    return this.toArray().filter(predicate);
+    const result: TItem[] = [];
+    this.#items.rawArray.forEach((node, i) => {
+      const item = this.#unwrap(node);
+      if (predicate(item, i)) result.push(item);
+    });
+    return result;
   }
 
   /**
@@ -1118,7 +1276,11 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns The value of the first element in the LiveList that satisfies the provided testing function. Otherwise, undefined is returned.
    */
   find(predicate: (value: TItem, index: number) => unknown): TItem | undefined {
-    return this.toArray().find(predicate);
+    for (const [i, node] of this.#items.rawArray.entries()) {
+      const item = this.#unwrap(node);
+      if (predicate(item, i)) return item;
+    }
+    return undefined;
   }
 
   /**
@@ -1127,7 +1289,9 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns The index of the first element in the LiveList that passes the test. Otherwise, -1.
    */
   findIndex(predicate: (value: TItem, index: number) => unknown): number {
-    return this.toArray().findIndex(predicate);
+    return this.#items.rawArray.findIndex((node, i) =>
+      predicate(this.#unwrap(node), i)
+    );
   }
 
   /**
@@ -1135,7 +1299,9 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @param callbackfn Function to execute on each element.
    */
   forEach(callbackfn: (value: TItem, index: number) => void): void {
-    return this.toArray().forEach(callbackfn);
+    this.#items.rawArray.forEach((node, i) =>
+      callbackfn(this.#unwrap(node), i)
+    );
   }
 
   /**
@@ -1144,13 +1310,8 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns The element at the specified index or undefined.
    */
   get(index: number): TItem | undefined {
-    if (index < 0 || index >= this.#items.length) {
-      return undefined;
-    }
-
-    return liveNodeToLson(this.#items[index]) as TItem | undefined;
-    //                                           ^^^^^^^^^^^^^^^^^
-    //                                           FIXME! This isn't safe.
+    const item = this.#items.at(index);
+    return item !== undefined ? this.#unwrap(item) : undefined;
   }
 
   /**
@@ -1160,17 +1321,23 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns The first index of the element in the LiveList; -1 if not found.
    */
   indexOf(searchElement: TItem, fromIndex?: number): number {
-    return this.toArray().indexOf(searchElement, fromIndex);
+    return this.#items.rawArray.findIndex(
+      (node, i) => i >= (fromIndex ?? 0) && this.#unwrap(node) === searchElement
+    );
   }
 
   /**
-   * Returns the last index at which a given element can be found in the LiveList, or -1 if it is not present. The LiveLsit is searched backwards, starting at fromIndex.
+   * Returns the last index at which a given element can be found in the LiveList, or -1 if it is not present. The LiveList is searched backwards, starting at fromIndex.
    * @param searchElement Element to locate.
    * @param fromIndex The index at which to start searching backwards.
-   * @returns
+   * @returns The last index of the element in the LiveList; -1 if not found.
    */
   lastIndexOf(searchElement: TItem, fromIndex?: number): number {
-    return this.toArray().lastIndexOf(searchElement, fromIndex);
+    const arr = this.#items.rawArray;
+    for (let i = fromIndex ?? arr.length - 1; i >= 0; i--) {
+      if (this.#unwrap(arr[i]) === searchElement) return i;
+    }
+    return -1;
   }
 
   /**
@@ -1179,13 +1346,8 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns An array with each element being the result of the callback function.
    */
   map<U>(callback: (value: TItem, index: number) => U): U[] {
-    return this.#items.map((entry, i) =>
-      callback(
-        liveNodeToLson(entry) as TItem,
-        //                    ^^^^^^^^
-        //                    FIXME! This isn't safe.
-        i
-      )
+    return this.#items.rawArray.map((node, i) =>
+      callback(this.#unwrap(node), i)
     );
   }
 
@@ -1195,11 +1357,15 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
    * @returns true if the callback function returns a truthy value for at least one element. Otherwise, false.
    */
   some(predicate: (value: TItem, index: number) => unknown): boolean {
-    return this.toArray().some(predicate);
+    return this.#items.rawArray.some((node, i) =>
+      predicate(this.#unwrap(node), i)
+    );
   }
 
-  [Symbol.iterator](): IterableIterator<TItem> {
-    return new LiveListIterator(this.#items);
+  *[Symbol.iterator](): IterableIterator<TItem> {
+    for (const node of this.#items) {
+      yield this.#unwrap(node);
+    }
   }
 
   #createAttachItemAndSort(
@@ -1214,7 +1380,7 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
     newItem._attach(op.id, nn(this._pool));
     newItem._setParentLink(this, key);
 
-    this._insertAndSort(newItem);
+    this.#insert(newItem);
 
     const newIndex = this._indexOfPosition(key);
 
@@ -1225,70 +1391,46 @@ export class LiveList<TItem extends Lson> extends AbstractCrdt {
     const shiftedPosition = makePosition(
       key,
       this.#items.length > index + 1
-        ? this.#items[index + 1]?._parentPos
+        ? this.#items.at(index + 1)?._parentPos
         : undefined
     );
 
-    this.#items[index]._setParentLink(this, shiftedPosition);
+    this.#updateItemPositionAt(index, shiftedPosition);
   }
 
   /** @internal */
   _toTreeNode(key: string): DevTools.LsonTreeNode {
+    const payload: DevTools.LsonTreeNode[] = [];
+    let index = 0;
+    for (const item of this.#items) {
+      payload.push(item.toTreeNode(index.toString()));
+      index++;
+    }
     return {
       type: "LiveList",
       id: this._id ?? nanoid(),
       key,
-      payload: this.#items.map((item, index) =>
-        item.toTreeNode(index.toString())
-      ),
+      payload,
     };
   }
 
-  toImmutable(): readonly ToImmutable<TItem>[] {
-    // Don't implement actual toJson logic in here. Implement it in ._toImmutable()
-    // instead. This helper merely exists to help TypeScript infer better
-    // return types.
-    return super.toImmutable() as readonly ToImmutable<TItem>[];
+  toJSON(): readonly ToJson<TItem>[] {
+    // Don't implement actual toJSON logic in here. Implement it in
+    // ._toJSON() instead. This helper merely exists to help TypeScript
+    // infer better return types.
+    return super.toJSON() as readonly ToJson<TItem>[];
   }
 
   /** @internal */
-  _toImmutable(): readonly ToImmutable<TItem>[] {
-    const result = this.#items.map((node) => node.toImmutable());
-    return (
-      process.env.NODE_ENV === "production" ? result : Object.freeze(result)
-    ) as readonly ToImmutable<TItem>[];
+  _toJSON(): readonly ToJson<TItem>[] {
+    const result = Array.from(this.#items, (node) => node.toJSON());
+    return freeze(result) as ToJson<TItem>[];
   }
 
   clone(): LiveList<TItem> {
-    return new LiveList(this.#items.map((item) => item.clone() as TItem));
-  }
-}
-
-class LiveListIterator<T extends Lson> implements IterableIterator<T> {
-  #innerIterator: IterableIterator<LiveNode>;
-
-  constructor(items: Array<LiveNode>) {
-    this.#innerIterator = items[Symbol.iterator]();
-  }
-
-  [Symbol.iterator](): IterableIterator<T> {
-    return this;
-  }
-
-  next(): IteratorResult<T> {
-    const result = this.#innerIterator.next();
-
-    if (result.done) {
-      return {
-        done: true,
-        value: undefined,
-      };
-    }
-
-    const value = liveNodeToLson(result.value) as T;
-    //                                         ^^^^
-    //                                         FIXME! This isn't safe.
-    return { value };
+    return new LiveList(
+      Array.from(this.#items, (item) => item.clone() as TItem)
+    );
   }
 }
 
@@ -1345,23 +1487,33 @@ function moveDelta(
 }
 
 /**
- * This function is only temporary.
- * As soon as we refactor the operations structure,
- * serializing a LiveStructure should not know anything about intent
+ * Tags the root op of a serialized CreateOp sequence with an `intent` ("set" or
+ * "push") and an optional `deletedId`, telling the server how to resolve the
+ * new node's position in its parent list: replace an existing item ("set") or
+ * append to the true end ("push"). Only the root is tagged; see the note in the
+ * body for why.
+ *
+ * By default, no explicit intent means a regular insert.
  */
-function HACK_addIntentAndDeletedIdToOperation<T extends CreateOp>(
+function addIntentToRootOp<T extends CreateOp>(ops: T[], intent: "push"): T[];
+function addIntentToRootOp<T extends CreateOp>(
   ops: T[],
-  deletedId: string | undefined
+  intent: "set",
+  deletedId?: string
+): T[];
+function addIntentToRootOp<T extends CreateOp>(
+  ops: T[],
+  intent: "set" | "push",
+  deletedId?: string
 ): T[] {
   return ops.map((op, index) => {
     if (index === 0) {
-      // NOTE: Only patch the first Op here
+      // NOTE: Only the *first* Op is patched. `_toOps`/`_toOpsWithOpId` emit
+      // `ops[0]` for the value itself (whose parent is the list), followed by
+      // ops for that value's descendants (whose parent is the new node, not
+      // the list).
       const firstOp = op;
-      return {
-        ...firstOp,
-        intent: "set",
-        deletedId,
-      };
+      return { ...firstOp, intent, deletedId };
     } else {
       return op;
     }

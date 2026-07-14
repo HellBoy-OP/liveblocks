@@ -2,16 +2,24 @@ import { describe, expect, test } from "vitest";
 
 import { Liveblocks } from "../client";
 
-const P1 = "room:read";
-const P2 = "room:write";
+const P1 = "*:read";
+const P2 = "*:write";
 const P3 = "comments:read";
-// const P4 = "comments:write";
+const P4 = "comments:public:write";
+const P5 = "comments:private:none";
 
-function makeSession(options?: { secret?: string; tenantId?: string }) {
+function makeSession(options?: {
+  secret?: string;
+  tenantId?: string;
+  organizationId?: string;
+}) {
   const client = new Liveblocks({
     secret: options?.secret ?? "sk_testingtesting",
   });
-  return client.prepareSession("user-123", { tenantId: options?.tenantId });
+  return client.prepareSession("user-123", {
+    tenantId: options?.tenantId,
+    organizationId: options?.organizationId,
+  });
 }
 
 describe("authorization (new API)", () => {
@@ -62,7 +70,7 @@ describe("authorization (new API)", () => {
     expect(
       session.allow("xyz", session.FULL_ACCESS).serializePermissions()
     ).toEqual({
-      xyz: ["room:write", "comments:write"],
+      xyz: ["*:write"],
     });
   });
 
@@ -71,8 +79,17 @@ describe("authorization (new API)", () => {
     expect(
       session.allow("xyz", session.READ_ACCESS).serializePermissions()
     ).toEqual({
-      xyz: ["room:read", "room:presence:write", "comments:read"],
+      xyz: ["*:read"],
     });
+  });
+
+  test("rejects non-array permissions", () => {
+    expect(() =>
+      makeSession()
+        // @ts-expect-error - Deliberate incorrect value
+        .allow("xyz", { default: "none" })
+        .serializePermissions()
+    ).toThrow("Permission list must be an array");
   });
 
   test("throws when no room name", () => {
@@ -139,6 +156,18 @@ describe("authorization (new API)", () => {
     ).toThrow("Not a valid permission: x");
   });
 
+  test("rejects unknown permissions even when mixed with valid ones", () => {
+    expect(() =>
+      makeSession()
+        .allow(
+          "foobar",
+          // @ts-expect-error - Deliberate incorrect string value
+          ["*:write", "future:scope"]
+        )
+        .serializePermissions()
+    ).toThrow("Not a valid permission: future:scope");
+  });
+
   test("permissions are additive", () => {
     expect(
       makeSession()
@@ -152,19 +181,43 @@ describe("authorization (new API)", () => {
     });
   });
 
+  test("accepts scoped comments permissions", () => {
+    expect(
+      makeSession().allow("foo", [P1, P4, P5]).serializePermissions()
+    ).toEqual({
+      foo: [P1, P4, P5],
+    });
+  });
+
+  test("permissions are preserved when adding defaults and resource-specific values", () => {
+    expect(
+      makeSession()
+        .allow("r", ["*:write", "storage:none"])
+        .allow("r", ["storage:read"])
+        .serializePermissions()
+    ).toEqual({
+      r: ["*:write", "storage:none", "storage:read"],
+    });
+
+    expect(
+      makeSession()
+        .allow("r", ["*:write", "storage:none"])
+        .allow("r", ["*:write"])
+        .serializePermissions()
+    ).toEqual({
+      r: ["*:write", "storage:none"],
+    });
+  });
+
   test("permissions are deduped", () => {
     expect(
       makeSession()
         .allow("r", [P1])
-        .allow("r", [P2, P3])
-        .allow("r", [P1, P3])
-        .allow("r", [P3])
-        .allow("r", [P3])
-        .allow("r", [P3])
-        .allow("r", [P3])
+        .allow("r", [P1])
+        .allow("r", [P1])
         .serializePermissions()
     ).toEqual({
-      r: [P1, P2, P3],
+      r: [P1],
     });
   });
 
@@ -219,11 +272,23 @@ describe("authorization (new API)", () => {
     );
   });
 
+  /**
+   * @deprecated Use organizationId instead.
+   */
   test("can set tenantId when creating session", () => {
     const session = makeSession({ tenantId: "tenant-123" });
     expect(session).toBeDefined();
 
     // The session should have the tenantId set internally
+    // We can verify this by checking that the session can be used normally
+    expect(session.allow("room-1", [P1]).hasPermissions()).toEqual(true);
+  });
+
+  test("can set organizationId when creating session", () => {
+    const session = makeSession({ organizationId: "org-123" });
+    expect(session).toBeDefined();
+
+    // The session should have the organizationId set internally
     // We can verify this by checking that the session can be used normally
     expect(session.allow("room-1", [P1]).hasPermissions()).toEqual(true);
   });
@@ -236,6 +301,9 @@ describe("authorization (new API)", () => {
     expect(session.allow("room-1", [P1]).hasPermissions()).toEqual(true);
   });
 
+  /**
+   * @deprecated Use organizationId instead.
+   */
   test("tenantId can be passed through client prepareSession", () => {
     const client = new Liveblocks({
       secret: "sk_testingtesting",
@@ -247,6 +315,20 @@ describe("authorization (new API)", () => {
     expect(session).toBeDefined();
 
     // Verify the session works normally with tenantId
+    expect(session.allow("room-1", [P1]).hasPermissions()).toEqual(true);
+  });
+
+  test("organizationId can be passed through client prepareSession", () => {
+    const client = new Liveblocks({
+      secret: "sk_testingtesting",
+    });
+
+    const session = client.prepareSession("user-123", {
+      organizationId: "org-456",
+    });
+    expect(session).toBeDefined();
+
+    // Verify the session works normally with organizationId
     expect(session.allow("room-1", [P1]).hasPermissions()).toEqual(true);
   });
 });

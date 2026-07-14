@@ -11,7 +11,7 @@ import {
 import { InboxNotificationList } from "@liveblocks/react-ui";
 import { Comment } from "@liveblocks/react-ui/primitives";
 import { ErrorBoundary } from "react-error-boundary";
-import { InboxNotificationData } from "@liveblocks/core";
+import { InboxNotificationData } from "@liveblocks/client";
 import { Avatar } from "@/components/Avatar";
 import classNames from "classnames";
 import { useRoomInfo, useInboxNotificationThread } from "@liveblocks/react";
@@ -181,10 +181,10 @@ function SmallInboxNotification({
               <div className="w-2 h-2 bg-indigo-500 rounded-full" />
             ) : null}
           </div>
-          <div className="text-xs text-neutral-400 w-full truncate flex items-center gap-[3px]">
+          <div className="text-xs text-neutral-400 w-full truncate flex gap-[3px]">
             <span>{user.name}:</span>
             <Comment.Body
-              className="overflow-hidden *:truncate"
+              className="overflow-hidden *:truncate truncate max-h-[1lh] whitespace-nowrap"
               body={latestComment.body}
               components={{ Mention, Link }}
             />

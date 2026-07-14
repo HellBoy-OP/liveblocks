@@ -1,7 +1,7 @@
 import {
   type BlockNoteEditorOptions,
   type BlockSchema,
-  createBlockNoteExtension,
+  createExtension,
   type DefaultBlockSchema,
   type DefaultInlineContentSchema,
   type DefaultStyleSchema,
@@ -20,7 +20,6 @@ export const withLiveblocksEditorOptions = <
   S extends StyleSchema = DefaultStyleSchema,
 >(
   liveblocksExtension: Extension<any, any>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   blocknoteOptions: Partial<BlockNoteEditorOptions<B, I, S>> = {},
   liveblocksOptions: Partial<{ mentions: boolean }> = {}
 ): Partial<BlockNoteEditorOptions<B, I, S>> => {
@@ -37,7 +36,7 @@ export const withLiveblocksEditorOptions = <
 
     // add the liveblocks extension
     extensions: [
-      createBlockNoteExtension({
+      createExtension({
         key: "liveblocksExtension",
         tiptapExtensions: [liveblocksExtension],
       }),

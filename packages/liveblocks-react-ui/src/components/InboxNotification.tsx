@@ -21,8 +21,7 @@ import {
   useRoomInfo,
 } from "@liveblocks/react";
 import { useRoomThreadSubscription } from "@liveblocks/react/_private";
-import { Slot } from "@radix-ui/react-slot";
-import { TooltipProvider } from "@radix-ui/react-tooltip";
+import { Slot as SlotPrimitive } from "radix-ui";
 import type {
   ComponentProps,
   ComponentPropsWithoutRef,
@@ -52,7 +51,7 @@ import { Timestamp } from "../primitives/Timestamp";
 import { useCurrentUserId } from "../shared";
 import type { SlotProp } from "../types";
 import { cn } from "../utils/cn";
-import { Avatar } from "./internal/Avatar";
+import { UserAvatar } from "./Avatar";
 import { Button } from "./internal/Button";
 import { CodeBlock } from "./internal/CodeBlock";
 import { Dropdown, DropdownItem, DropdownTrigger } from "./internal/Dropdown";
@@ -63,7 +62,7 @@ import {
 } from "./internal/InboxNotificationThread";
 import { List } from "./internal/List";
 import { Room } from "./internal/Room";
-import { Tooltip } from "./internal/Tooltip";
+import { Tooltip, TooltipProvider } from "./internal/Tooltip";
 import { User } from "./internal/User";
 
 type ComponentTypeWithRef<
@@ -90,7 +89,8 @@ interface InboxNotificationSharedProps {
 }
 
 export interface InboxNotificationProps
-  extends Omit<ComponentPropsWithoutRef<"a">, "title">,
+  extends
+    Omit<ComponentPropsWithoutRef<"a">, "title">,
     InboxNotificationSharedProps {
   /**
    * The inbox notification to display.
@@ -119,7 +119,8 @@ export interface InboxNotificationProps
 }
 
 export interface InboxNotificationThreadProps
-  extends Omit<InboxNotificationProps, "kinds" | "children">,
+  extends
+    Omit<InboxNotificationProps, "kinds" | "children">,
     InboxNotificationSharedProps {
   /**
    * The inbox notification to display.
@@ -143,8 +144,7 @@ export interface InboxNotificationThreadProps
 }
 
 export interface InboxNotificationTextMentionProps
-  extends Omit<InboxNotificationProps, "kinds">,
-    InboxNotificationSharedProps {
+  extends Omit<InboxNotificationProps, "kinds">, InboxNotificationSharedProps {
   /**
    * The inbox notification to display.
    */
@@ -157,7 +157,8 @@ export interface InboxNotificationTextMentionProps
 }
 
 export interface InboxNotificationInspectorProps
-  extends Omit<InboxNotificationProps, "kinds" | "children">,
+  extends
+    Omit<InboxNotificationProps, "kinds" | "children">,
     InboxNotificationSharedProps {
   /**
    * The inbox notification to display.
@@ -166,7 +167,8 @@ export interface InboxNotificationInspectorProps
 }
 
 export interface InboxNotificationCustomProps
-  extends Omit<InboxNotificationProps, "kinds">,
+  extends
+    Omit<InboxNotificationProps, "kinds">,
     InboxNotificationSharedProps,
     SlotProp {
   /**
@@ -218,7 +220,8 @@ export type InboxNotificationCustomKindProps<K extends KDAD = KDAD> = Omit<
 };
 
 interface InboxNotificationLayoutProps
-  extends Omit<ComponentPropsWithoutRef<"a">, "title">,
+  extends
+    Omit<ComponentPropsWithoutRef<"a">, "title">,
     InboxNotificationSharedProps,
     SlotProp {
   inboxNotification: InboxNotificationData;
@@ -278,7 +281,7 @@ const InboxNotificationLayout = forwardRef<
   ) => {
     const $ = useOverrides(overrides);
     const { Anchor } = useComponents(components);
-    const Component = asChild ? Slot : Anchor;
+    const Component = asChild ? SlotPrimitive.Slot : Anchor;
     const [isMoreActionOpen, setMoreActionOpen] = useState(false);
     const markInboxNotificationAsRead = useMarkInboxNotificationAsRead();
     const deleteInboxNotification = useDeleteInboxNotification();
@@ -433,7 +436,7 @@ function InboxNotificationAvatar({
   ...props
 }: InboxNotificationAvatarProps) {
   return (
-    <Avatar
+    <UserAvatar
       className={cn("lb-inbox-notification-avatar", className)}
       {...props}
     />

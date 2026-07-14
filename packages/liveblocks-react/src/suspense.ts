@@ -17,7 +17,11 @@ export type { Json, JsonObject } from "@liveblocks/client";
 export { shallow, isNotificationChannelEnabled } from "@liveblocks/client";
 
 // Export all the top-level hooks
-export { ClientContext, RoomContext, useClient } from "./contexts";
+export {
+  ClientContext,
+  GlobalRoomContext as RoomContext,
+  useClient,
+} from "./contexts";
 export { RegisterAiKnowledge, RegisterAiTool } from "./ai";
 export type {
   AiChatStatus,
@@ -45,8 +49,12 @@ export {
   useCanRedo,
   useCanUndo,
   useCreateComment,
+  useCreateFeed,
+  useCreateFeedMessage,
   useCreateThread,
   useDeleteComment,
+  useDeleteFeed,
+  useDeleteFeedMessage,
   useDeleteThread,
   useEditComment,
   useEditThreadMetadata,
@@ -70,6 +78,8 @@ export {
   useStorageRoot,
   useThreadSubscription,
   useUndo,
+  useUpdateFeedMetadata,
+  useUpdateFeedMessage,
   useUpdateMyPresence,
   useUpdateRoomSubscriptionSettings,
 } from "./room";
@@ -87,6 +97,8 @@ export {
   useAttachmentUrlSuspense as useAttachmentUrl,
   useHistoryVersionsSuspense as useHistoryVersions,
   useRoomSubscriptionSettingsSuspense as useRoomSubscriptionSettings,
+  useFeedsSuspense as useFeeds,
+  useFeedMessagesSuspense as useFeedMessages,
 } from "./room";
 export {
   useInboxNotificationsSuspense as useInboxNotifications,

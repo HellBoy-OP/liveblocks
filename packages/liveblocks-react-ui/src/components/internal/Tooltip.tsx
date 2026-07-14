@@ -1,6 +1,6 @@
 "use client";
 
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
+import { Tooltip as TooltipPrimitive } from "radix-ui";
 import type { ComponentProps, ReactNode } from "react";
 import { forwardRef, useMemo } from "react";
 
@@ -36,7 +36,8 @@ const KEYS = {
 } as const;
 
 export interface TooltipProps
-  extends Pick<TooltipPrimitive.TooltipTriggerProps, "children">,
+  extends
+    Pick<TooltipPrimitive.TooltipTriggerProps, "children">,
     Omit<TooltipPrimitive.TooltipContentProps, "content"> {
   content: ReactNode;
   multiline?: boolean;
@@ -91,6 +92,7 @@ export const Tooltip = forwardRef<HTMLButtonElement, TooltipProps>(
             )}
             side="top"
             align="center"
+            updatePositionStrategy="always"
             sideOffset={FLOATING_ELEMENT_SIDE_OFFSET}
             collisionPadding={FLOATING_ELEMENT_COLLISION_PADDING}
             {...props}
@@ -139,4 +141,5 @@ function ShortcutTooltipKey({ name, ...props }: ShortcutTooltipKeyProps) {
   );
 }
 
-export { TooltipProvider } from "@radix-ui/react-tooltip";
+export const TooltipProvider: typeof TooltipPrimitive.Provider =
+  TooltipPrimitive.Provider;

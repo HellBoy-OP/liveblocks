@@ -18,16 +18,16 @@ import type { LiveblocksYjsProvider } from "@liveblocks/yjs";
 import { getYjsProviderForRoom } from "@liveblocks/yjs";
 import type { AnyExtension, Editor } from "@tiptap/core";
 import { Extension, getMarkType, Mark } from "@tiptap/core";
-import Collaboration from "@tiptap/extension-collaboration";
-import CollaborationCaret, {
-  type CollaborationCaretOptions,
-} from "@tiptap/extension-collaboration-caret";
 import type { Mark as PMMark } from "@tiptap/pm/model";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
 import { AiExtension } from "./ai/AiExtension";
+import { Collaboration } from "./collaboration/collaboration";
 import {
-  areSetsEqual,
+  CollaborationCaret,
+  type CollaborationCaretOptions,
+} from "./collaboration-caret/collaboration-caret";
+import {
   CommentsExtension,
   FILTERED_THREADS_PLUGIN_KEY,
 } from "./comments/CommentsExtension";
@@ -39,6 +39,7 @@ import type {
   ResolveContextualPromptResponse,
 } from "./types";
 import { LIVEBLOCKS_COMMENT_MARK_TYPE } from "./types";
+import { areSetsEqual } from "./utils";
 
 type WithRequired<T, K extends keyof T> = T & { [P in K]-?: T[P] };
 
@@ -251,7 +252,6 @@ export const useLiveblocksExtension = (
   const deleteTextMention = useDeleteTextMention();
 
   // Tiptap has options default as any, in tiptap2, we could use never, but now we must use any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return Extension.create<any, LiveblocksExtensionStorage>({
     name: "liveblocksExtension",
 

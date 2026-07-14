@@ -175,7 +175,9 @@ const client = createClient({
     detailedType='async? (args: ResolveUsersArgs) => (UserMeta["info"] | undefined)[] | undefined'
   >
     A function that resolves user information in
-    [Comments](/docs/ready-made-features/comments), [Text Editor](/docs/ready-made-features/text-editor), and [Notifications](/docs/ready-made-features/notifications). Return an array of
+    [Comments](/docs/ready-made-features/comments), [Text
+    Editor](/docs/ready-made-features/text-editor), and
+    [Notifications](/docs/ready-made-features/notifications). Return an array of
     `UserMeta["info"]` objects in the same order they arrived. [Learn
     more](#createClientResolveUsers).
   </PropertiesListItem>
@@ -193,7 +195,8 @@ const client = createClient({
     detailedType="async? (args: ResolveGroupsInfoArgs) => (GroupInfo | undefined)[] | undefined"
   >
     A function that resolves group information in
-    [Comments](/docs/ready-made-features/comments) and [Text Editor](/docs/ready-made-features/text-editor). Return an array of
+    [Comments](/docs/ready-made-features/comments) and [Text
+    Editor](/docs/ready-made-features/text-editor). Return an array of
     `GroupInfo` objects in the same order they arrived. [Learn
     more](#createClientResolveGroupsInfo).
   </PropertiesListItem>
@@ -202,8 +205,9 @@ const client = createClient({
     detailedType="async? (args: ResolveMentionSuggestionsArgs) => string[] | MentionData[]"
   >
     A function that resolves mention suggestions in
-    [Comments](/docs/ready-made-features/comments) and [Text Editor](/docs/ready-made-features/text-editor). Return an array of user IDs or mention objects.
-    [Learn more](#createClientResolveMentionSuggestions).
+    [Comments](/docs/ready-made-features/comments) and [Text
+    Editor](/docs/ready-made-features/text-editor). Return an array of user IDs
+    or mention objects. [Learn more](#createClientResolveMentionSuggestions).
   </PropertiesListItem>
   <PropertiesListItem name="polyfills">
     Place polyfills for `atob`, `fetch`, and `WebSocket` inside here. Useful
@@ -211,34 +215,13 @@ const client = createClient({
     or [React Native](#createClientReactNative).
   </PropertiesListItem>
   <PropertiesListItem
-    name="largeMessageStrategy"
-    detailedType='"default" | "split" | "experimental-fallback-to-http"'
-    defaultValue={`"default"`}
-  >
-    <div className="-mb-3">
-      How to handle WebSocket messages that are larger than the maximum message size. Can be set to one of these values:
-    </div>
-
-    - `"default"` Don’t send anything, but log the error to the console and notify useErrorListener.
-    - `"split"` Break the message up into chunks each of which is smaller than the maximum message size. Beware that using `"split"` will sacrifice atomicity of changes! Depending on your use case, this may or may not be problematic.
-    - `"experimental-fallback-to-http"` Try sending the update over HTTP instead of WebSockets. This strategy is marked experimental, as it can make the client appear as "synchronizing" indefinitely when used with Liveblocks Storage or Yjs.
-
-  </PropertiesListItem>
-  <PropertiesListItem
     name="badgeLocation"
     detailedType='"top-right" | "bottom-right" | "bottom-left" | "top-left"'
     defaultValue={`"bottom-right"`}
   >
-    The location of the "Powered by Liveblocks" badge. Can be set to either `"top-right"`, `"bottom-right"`, `"bottom-left"`, or `"top-left"`.
-    [Learn more](#createClientBadgeLocation).
-  </PropertiesListItem>
-  <PropertiesListItem
-    name="unstable_streamData"
-    type="boolean"
-    defaultValue="false"
-  >
-    Experimental. Stream the initial Storage content over HTTP, instead of
-    waiting for a large initial WebSocket message to be sent from the server.
+    The location of the "Powered by Liveblocks" badge. Can be set to either
+    `"top-right"`, `"bottom-right"`, `"bottom-left"`, or `"top-left"`. [Learn
+    more](#createClientBadgeLocation).
   </PropertiesListItem>
 </PropertiesList>
 
@@ -871,6 +854,13 @@ Note that it’s possible to [add types to your room](#typing-your-data).
     defaultValue="true"
   >
     Whether the room immediately connects to Liveblocks servers.
+  </PropertiesListItem>
+  <PropertiesListItem name="options.engine" type="1 | 2">
+    Preferred storage engine version to use when creating the room. Only takes
+    effect if the room doesn’t exist yet. The v2 Storage engine supports larger
+    documents, is more performant, has native streaming support, and will become
+    the default in the future. [Learn
+    more](/docs/guides/about-the-new-storage-engine).
   </PropertiesListItem>
 </PropertiesList>
 
@@ -2557,12 +2547,12 @@ room.batch(() => {
 });
 
 // { name: "Felix", age: 10 }
-pet.toImmutable();
+pet.toJSON();
 
 room.history.undo();
 
 // { name: "Fido", age: 5 }
-pet.toImmutable();
+pet.toJSON();
 ```
 
 #### Doesn’t work with async functions
@@ -2770,6 +2760,78 @@ room.get("time");
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
 
+### Room.history.disable [#Room.history.disable]
+
+Executes a callback with history tracking temporarily disabled. Any storage
+mutations made inside the callback will be applied normally but will not appear
+on the undo/redo stacks. This is useful for background writes that should not be
+undoable, such as writing back results from agent updates or reconciling state
+from an external source.
+
+If the callback throws, the undo/redo stacks are left unchanged (as if the
+callback never ran).
+
+```ts
+room.history.disable(() => {
+  root.set("generatedText", result);
+});
+```
+
+#### Batching
+
+When combining with [`room.batch`](#Room.batch), always place the batch _inside_
+the `disable` call. If `batch` wraps `disable`, the batched mutations will still
+end up on the undo stack.
+
+```ts
+// ✅ Disabling undo must happen around a batch
+room.history.disable(() => {
+  room.batch(() => {
+    root.set("x", 1);
+    root.set("y", 2);
+  });
+});
+
+// ❌ Batch wraps disable, mutations will still end up in the undo stack
+room.batch(() => {
+  room.history.disable(() => {
+    root.set("x", 1);
+    root.set("y", 2);
+  });
+});
+```
+
+#### Async
+
+The history API is synchronous. For long-running async tasks, call
+`history.disable` at each synchronous step rather than wrapping the entire async
+function:
+
+```ts
+async function generateSummary() {
+  room.history.disable(() => root.set("status", "generating"));
+  const summary = await fetchSummaryFromAgent();
+  room.history.disable(() => {
+    room.batch(() => {
+      root.set("summary", summary);
+      root.set("status", "done");
+    });
+  });
+}
+```
+
+<PropertiesList title="Returns">
+  <PropertiesListItem name="return" type="T">
+    The return value of the callback.
+  </PropertiesListItem>
+</PropertiesList>
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="fn" type="() => T" required>
+    The callback to execute while history is disabled.
+  </PropertiesListItem>
+</PropertiesList>
+
 ### Room.connect
 
 Connect the local room instance to the Liveblocks server. Does nothing if the
@@ -2852,6 +2914,11 @@ console.log(inboxNotifications);
   <PropertiesListItem name="resolved" type="boolean">
     Only return `resolved` or `unresolved` threads. [Learn more](#filtering-resolved-status).
   </PropertiesListItem>
+  <PropertiesListItem name="visibility" type='"public" | "private"'>
+    Only return `public` or `private` threads. Permissions are taken into account so users
+    without access to private threads won’t receive them. [Learn
+    more](#filtering-visibility).
+  </PropertiesListItem>
   <PropertiesListItem name="subscribed" type="boolean">
     Only return `subscribed` or `unsubscribed` threads. [Learn more](#filtering-subscribed-status).
   </PropertiesListItem>
@@ -2871,6 +2938,25 @@ const threads = await room.getThreads({
   query: {
     // +++
     resolved: false,
+    // +++
+  },
+});
+```
+
+#### Filtering visibility [#filtering-visibility]
+
+You can filter threads based on visibility by passing `"public"` or `"private"`
+to `query.visibility`.
+
+Permissions are taken into account, for example querying private threads returns
+no threads if the current user does not have access to private threads.
+
+```ts
+// Filtering for private threads
+const threads = await room.getThreads({
+  query: {
+    // +++
+    visibility: "private",
     // +++
   },
 });
@@ -3109,6 +3195,15 @@ const thread = await room.createThread({
     Custom metadata to be attached to the thread, see [defining thread
     metadata](#defining-thread-metadata).
   </PropertiesListItem>
+  <PropertiesListItem
+    name="visibility"
+    type='"public" | "private"'
+    defaultValue='"public"'
+  >
+    Whether to create a public or private thread. Permissions are taken into
+    account so a user without write access to private threads can’t create a
+    private thread.
+  </PropertiesListItem>
 </PropertiesList>
 
 #### Creating thread content [#creating-thread-content]
@@ -3182,6 +3277,31 @@ const metadata: Liveblocks["ThreadMetadata"] = {
 
 const thread = await room.createThread({ body, metadata });
 ```
+
+#### Creating private threads [#creating-private-threads]
+
+Threads are public by default. To create a private thread, pass
+`visibility: "private"`.
+
+```ts
+const thread = await room.createThread({
+  body,
+  // +++
+  visibility: "private",
+  // +++
+});
+```
+
+Permissions are taken into account when threads are created and retrieved. A
+user without write access to private threads can’t create a private thread, and
+users without read access to private threads won’t receive private threads from
+[`room.getThreads`](#Room.getThreads) or [`room.getThread`](#Room.getThread).
+
+<Banner>
+
+Private threads are only available on Team and Enterprise plans.
+
+</Banner>
 
 ### Room.deleteThread
 
@@ -3443,7 +3563,20 @@ const body: CommentBody = {
 #### Defining comment metadata [#defining-comment-metadata]
 
 Custom metadata can be attached to each comment. `string`, `number`, and
-`boolean` properties are allowed.
+`boolean` properties are allowed. First, type your data with `CommentMetadata`.
+
+```ts file="liveblocks.config.ts"
+declare global {
+  interface Liveblocks {
+    CommentMetadata: {
+      priority: number;
+      reviewed: boolean;
+    };
+  }
+}
+```
+
+Then use it in your code.
 
 ```ts
 const metadata: Liveblocks["CommentMetadata"] = {
@@ -3707,6 +3840,245 @@ console.log(url);
 <PropertiesList title="Arguments">
   <PropertiesListItem name="attachmentId" type="string" required>
     The ID of the attachment to get the URL for.
+  </PropertiesListItem>
+</PropertiesList>
+
+## Feeds
+
+### Room.fetchFeeds
+
+Fetches feeds in the current room. Returns a paginated list of feeds with an
+optional cursor for fetching more.
+
+```ts
+const { feeds, nextCursor } = await room.fetchFeeds();
+
+// [{ feedId: "feed-1", metadata: {...}, timestamp: 1234567890 }, ...]
+console.log(feeds);
+```
+
+A number of options are available for filtering and pagination.
+
+```ts
+const { feeds, nextCursor } = await room.fetchFeeds({
+  // Optional, cursor for pagination. Use nextCursor from previous response
+  cursor: "abc123",
+
+  // Optional, only return feeds created or updated after this timestamp (ms)
+  since: 1234567890000,
+
+  // Optional, limit the number of feeds to return
+  limit: 50,
+
+  // Optional, filter feeds by metadata. Only feeds with matching metadata are returned
+  metadata: {
+    channel: true,
+    name: "My Feed",
+  },
+});
+```
+
+<PropertiesList title="Returns">
+  <PropertiesListItem name="feeds" type="Feed[]">
+    Feeds within the current room.
+  </PropertiesListItem>
+  <PropertiesListItem name="nextCursor" type="string | undefined">
+    Cursor for fetching the next page of feeds.
+  </PropertiesListItem>
+</PropertiesList>
+
+<PropertiesList title="Options">
+  <PropertiesListItem name="cursor" type="string">
+    Optional cursor for pagination.
+  </PropertiesListItem>
+  <PropertiesListItem name="since" type="number">
+    Optional timestamp filter (ms). Only messages whose `createdAt` is at or
+    after this value are included.
+  </PropertiesListItem>
+  <PropertiesListItem name="limit" type="number">
+    Optional limit for the number of feeds to return.
+  </PropertiesListItem>
+  <PropertiesListItem name="metadata" type="object">
+    Optional filter for feeds by metadata. Only feeds with matching metadata are
+    returned.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.fetchFeedMessages
+
+Fetches messages for a specific feed in the current room. Returns a paginated
+list of messages with an optional cursor for fetching more.
+
+```ts
+const { messages, nextCursor } = await room.fetchFeedMessages("my-feed-id");
+
+// [{ id: "msg-1", timestamp: 1234567890, data: {...} }, ...]
+console.log(messages);
+```
+
+```ts
+const { messages, nextCursor } = await room.fetchFeedMessages("my-feed-id", {
+  // Optional, cursor for pagination
+  cursor: "abc123",
+
+  // Optional, only return messages created after this timestamp (ms)
+  since: 1234567890000,
+
+  // Optional, limit the number of messages to return
+  limit: 50,
+});
+```
+
+<PropertiesList title="Returns">
+  <PropertiesListItem name="messages" type="FeedMessage[]">
+    Messages within the feed.
+  </PropertiesListItem>
+  <PropertiesListItem name="nextCursor" type="string | undefined">
+    Cursor for fetching the next page of messages.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.addFeed
+
+Adds a new feed to the room. Changes are synchronized in real-time to all
+connected clients.
+
+```ts
+room.addFeed("my-feed-id");
+
+// With optional metadata and timestamp
+room.addFeed("my-feed-id", {
+  metadata: { name: "My Feed", channel: true },
+  timestamp: Date.now(),
+});
+```
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="feedId" type="string" required>
+    The ID of the feed to create.
+  </PropertiesListItem>
+  <PropertiesListItem name="options.metadata" type="object">
+    Optional custom metadata for the feed.
+  </PropertiesListItem>
+  <PropertiesListItem name="options.timestamp" type="number">
+    Optional timestamp in milliseconds. Defaults to current time if not
+    provided.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.updateFeed
+
+Updates the metadata of an existing feed. Changes are synchronized in real-time
+to all connected clients.
+
+```ts
+room.updateFeed("my-feed-id", {
+  name: "Updated Feed Name",
+  updated: new Date().toISOString(),
+});
+```
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="feedId" type="string" required>
+    The ID of the feed to update.
+  </PropertiesListItem>
+  <PropertiesListItem name="metadata" type="object" required>
+    The new metadata for the feed.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.deleteFeed
+
+Deletes a feed from the room. Changes are synchronized in real-time to all
+connected clients.
+
+```ts
+room.deleteFeed("my-feed-id");
+```
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="feedId" type="string" required>
+    The ID of the feed to delete.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.addFeedMessage
+
+Adds a new message to a feed. Changes are synchronized in real-time to all
+connected clients.
+
+```ts
+room.addFeedMessage("my-feed-id", {
+  role: "user",
+  content: "Hello, world!",
+});
+
+// With optional id and timestamp
+room.addFeedMessage(
+  "my-feed-id",
+  { role: "user", content: "Hello!" },
+  {
+    id: "my-message-id",
+    timestamp: Date.now(),
+  }
+);
+```
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="feedId" type="string" required>
+    The ID of the feed to add the message to.
+  </PropertiesListItem>
+  <PropertiesListItem name="data" type="object" required>
+    The message data.
+  </PropertiesListItem>
+  <PropertiesListItem name="options.id" type="string">
+    Optional message ID. One will be generated if not provided.
+  </PropertiesListItem>
+  <PropertiesListItem name="options.timestamp" type="number">
+    Optional timestamp in milliseconds. Defaults to current time if not
+    provided.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.updateFeedMessage
+
+Updates an existing feed message. Changes are synchronized in real-time to all
+connected clients.
+
+```ts
+room.updateFeedMessage("my-feed-id", "my-message-id", {
+  role: "user",
+  content: "Updated content",
+});
+```
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="feedId" type="string" required>
+    The ID of the feed containing the message.
+  </PropertiesListItem>
+  <PropertiesListItem name="messageId" type="string" required>
+    The ID of the message to update.
+  </PropertiesListItem>
+  <PropertiesListItem name="data" type="object" required>
+    The new message data.
+  </PropertiesListItem>
+</PropertiesList>
+
+### Room.deleteFeedMessage
+
+Deletes a feed message. Changes are synchronized in real-time to all connected
+clients.
+
+```ts
+room.deleteFeedMessage("my-feed-id", "my-message-id");
+```
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="feedId" type="string" required>
+    The ID of the feed containing the message.
+  </PropertiesListItem>
+  <PropertiesListItem name="messageId" type="string" required>
+    The ID of the message to delete.
   </PropertiesListItem>
 </PropertiesList>
 
@@ -4280,6 +4652,41 @@ JSON-serializable data. If multiple clients update the same property
 simultaneously, the last modification received by the Liveblocks servers is the
 winner.
 
+### LiveObject.from [#LiveObject.from]
+
+Creates a new `LiveObject` from a plain JSON object, recursively converting
+nested objects to `LiveObject` instances and arrays to `LiveList` instances.
+
+```ts
+const liveObject = LiveObject.from({
+  name: "Grace",
+  hobbies: ["reading", "piano"],
+  address: { city: "New York", zip: "10001" },
+});
+```
+
+This is equivalent to writing:
+
+```ts
+const liveObject = new LiveObject({
+  name: "Grace",
+  hobbies: new LiveList(["reading", "piano"]),
+  address: new LiveObject({ city: "New York", zip: "10001" }),
+});
+```
+
+<PropertiesList title="Returns">
+  <PropertiesListItem name="liveObject" type="LiveObject">
+    A new `LiveObject` with deeply converted children.
+  </PropertiesListItem>
+</PropertiesList>
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="obj" type="JsonObject" required>
+    A plain JSON object to convert into a `LiveObject`.
+  </PropertiesListItem>
+</PropertiesList>
+
 ### new LiveObject [#LiveObject.constructor]
 
 Create an empty `LiveObject`
@@ -4335,7 +4742,7 @@ const object = new LiveObject({ firstName: "Ada", lastName: "Lovelace" });
 object.delete("lastName");
 
 // { firstName: "Ada" }
-object.toImmutable();
+object.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -4379,7 +4786,7 @@ const object = new LiveObject({ firstName: "Marie" });
 object.set("lastName", "Curie");
 
 // { firstName: "Ada", lastName: "Curie" }
-object.toImmutable();
+object.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -4404,7 +4811,7 @@ const object = new LiveObject({ firstName: "Grace" });
 object.update({ lastName: "Hopper", job: "Computer Scientist" });
 
 // { firstName: "Grace", lastName: "Hopper", job: "Computer Scientist" }
-object.toImmutable();
+object.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -4436,12 +4843,12 @@ root.set("b", obj.clone());
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
 
-### toImmutable [#LiveObject.toImmutable]
+### toJSON [#LiveObject.toJSON]
 
-Returns an immutable JavaScript object that is equivalent to the `LiveObject`.
-Nested values will also be immutable. Calling this method multiple times has no
-performance penalty. It will return the same cached immutable value as long as
-its (nested) contents have not changed.
+Returns a JSON-compatible snapshot of this `LiveObject` and all its nested
+children. `LiveObject` values become plain objects, `LiveList` values become
+arrays, and `LiveMap` values also become plain objects (not `Map` instances).
+The result is cached and only recomputed when the contents change.
 
 ```ts
 const liveObject = new LiveObject({
@@ -4450,51 +4857,62 @@ const liveObject = new LiveObject({
   hobbies: new LiveList(["reading", "piano"]),
 });
 
-// {
-//   firstName: "Grace",
-//   lastName: "Hopper",
-//   hobbies: ["reading", "piano"]
-// }
-liveObject.toImmutable();
+// { firstName: "Grace", lastName: "Hopper", hobbies: ["reading", "piano"] }
+liveObject.toJSON();
 ```
 
 <PropertiesList title="Returns">
-  <PropertiesListItem name="immutableStructure" type="object">
-    Returns a JavaScript object in the shape of your data structure.
-    `LiveObject` is converted to an object, `LiveMap` to a map, and `LiveList`
-    to an array.
+  <PropertiesListItem name="snapshot" type="object">
+    A plain JSON-compatible object. Always serializable — `JSON.stringify()`
+    works out of the box.
   </PropertiesListItem>
 </PropertiesList>
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
 
-### toObject [#LiveObject.toObject]
+### reconcile [#LiveObject.reconcile]
 
-<Banner title="Will be deprecated in the future">
-
-Starting with 0.18, we recommend [`toImmutable`][] instead. It’s faster, cached,
-and leads to fewer surprises.
-
-</Banner>
-
-Transform the `LiveObject` into a normal JavaScript object.
-
-```ts
-const liveObject = new LiveObject({ firstName: "Grace", lastName: "Hopper" });
-liveObject.toObject();
-// { firstName: "Grace", lastName: "Hopper" }
-```
-
-Please note that this method won’t recursively convert Live structures, which
-may be surprising:
+Reconciles this `LiveObject` tree to match the given JSON object. Only mutates
+keys that actually changed. Keys present on this `LiveObject` but absent from
+the input will be deleted. Nested structures are recursively reconciled.
 
 ```ts
 const liveObject = new LiveObject({
-  animals: new LiveList(["🦁", "🦊", "🐵"]),
+  name: "Grace",
+  age: 85,
+  nested: new LiveObject({ x: 1, y: 2 }),
 });
-liveObject.toObject();
-// { animals: <LiveList instance> } // ❗️
+
+// Updates nested.y, deletes age (absent from input)
+liveObject.reconcile({ name: "Grace", nested: { x: 1, y: 99 } });
 ```
+
+<PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
+
+<PropertiesList title="Arguments">
+  <PropertiesListItem name="jsonObj" type="JsonObject" required>
+    The target state to reconcile towards. Missing keys will be deleted.
+  </PropertiesListItem>
+</PropertiesList>
+
+### toImmutable [#LiveObject.toImmutable]
+
+<Banner title="Removed in 3.18" type="warning">
+
+This method has been replaced by [`.toJSON()`](#LiveObject.toJSON), which
+returns plain objects instead of `Map` instances for `LiveMap` values, making
+the result always valid JSON. Please migrate to `.toJSON()`.
+
+</Banner>
+
+### toObject [#LiveObject.toObject]
+
+<Banner title="Removed in 3.18" type="warning">
+
+Use `.toJSON()` instead. It’s faster, cached, and deeply converts all nested
+Live structures.
+
+</Banner>
 
 ## LiveMap
 
@@ -4581,7 +4999,7 @@ const map = new LiveMap([
 map.delete("nimesh");
 
 // Map { "pierre" => "designer" }
-map.toImmutable();
+map.toJSON();
 ```
 
 <PropertiesList title="Returns">
@@ -4749,7 +5167,7 @@ const map = new LiveMap();
 map.set("vincent", "engineer");
 
 // Map { "vincent" => "engineer" }
-map.toImmutable();
+map.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -4835,12 +5253,12 @@ root.set("b", map.clone());
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
 
-### toImmutable [#LiveMap.toImmutable]
+### toJSON [#LiveMap.toJSON]
 
-Returns an immutable ES6 Map that is equivalent to the `LiveMap`. Nested values
-will also be immutable. Calling this method multiple times has no performance
-penalty. It will return the same cached immutable value as long as its (nested)
-contents have not changed.
+Returns a JSON-compatible snapshot of this `LiveMap` and all its nested
+children. `LiveObject` values become plain objects, `LiveList` values become
+arrays, and `LiveMap` values also become plain objects (not `Map` instances).
+The result is cached and only recomputed when the contents change.
 
 ```ts
 const map = new LiveMap([
@@ -4848,22 +5266,27 @@ const map = new LiveMap([
   ["marc", new LiveObject({ role: "designer" })],
 ]);
 
-// Map {
-//   "florent" => { role: "engineer" },
-//   "marc" => { role: "designer" },
-// }
-map.toImmutable();
+// { florent: { role: "engineer" }, marc: { role: "designer" } }
+map.toJSON();
 ```
 
 <PropertiesList title="Returns">
-  <PropertiesListItem name="immutableStructure" type="object">
-    Returns a JavaScript object in the shape of your data structure. `LiveMap`
-    is converted to a map, `LiveObject` to an object, and `LiveList` to an
-    array.
+  <PropertiesListItem name="snapshot" type="object">
+    A plain JSON-compatible object with string keys.
   </PropertiesListItem>
 </PropertiesList>
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
+
+### toImmutable [#LiveMap.toImmutable]
+
+<Banner title="Removed in 3.18" type="warning">
+
+This method has been replaced by [`.toJSON()`](#LiveMap.toJSON), which returns
+plain objects instead of `Map` instances, making the result always valid JSON.
+Please migrate to `.toJSON()`.
+
+</Banner>
 
 ## LiveList
 
@@ -4917,7 +5340,7 @@ const list = new LiveList(["adrien", "jonathan"]);
 list.clear();
 
 // []
-list.toImmutable();
+list.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -4934,7 +5357,7 @@ const list = new LiveList(["adrien", "jonathan"]);
 list.delete(0);
 
 // ["jonathan"]
-list.toImmutable();
+list.toJSON();
 ```
 
 This operation uses ID-based semantics, not position-based. When called, it
@@ -5173,7 +5596,7 @@ const list = new LiveList(["adrien", "jonathan"]);
 list.insert("chris", 1);
 
 // ["adrien", "chris", "jonathan"]
-list.toImmutable();
+list.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -5278,7 +5701,7 @@ const list = new LiveList(["adrien", "chris", "jonathan"]);
 list.move(2, 0);
 
 // ["jonathan", "adrien", "chris"]
-list.toImmutable();
+list.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -5302,7 +5725,7 @@ const list = new LiveList(["adrien", "jonathan"]);
 list.push("chris");
 
 // ["adrien", "jonathan", "chris"]
-list.toImmutable();
+list.toJSON();
 ```
 
 <PropertiesListEmpty title="Returns">_Nothing_</PropertiesListEmpty>
@@ -5323,7 +5746,7 @@ const list = new LiveList(["adrien", "jonathan"]);
 list.set(1, "chris");
 
 // equals ["adrien", "chris"]
-list.toImmutable();
+list.toJSON();
 ```
 
 ### some [#LiveList.some]
@@ -5378,12 +5801,12 @@ root.set("b", list.clone());
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
 
-### toImmutable [#LiveList.toImmutable]
+### toJSON [#LiveList.toJSON]
 
-Returns an immutable JavaScript array that is equivalent to the `LiveList`.
-Nested values will also be immutable. Calling this method multiple times has no
-performance penalty. It will return the same cached immutable value as long as
-its (nested) contents have not changed.
+Returns a JSON-compatible snapshot of this `LiveList` and all its nested
+children. `LiveObject` values become plain objects, `LiveList` values become
+arrays, and `LiveMap` values also become plain objects (not `Map` instances).
+The result is cached and only recomputed when the contents change.
 
 ```ts
 const list = new LiveList([
@@ -5391,49 +5814,37 @@ const list = new LiveList([
   new LiveObject({ name: "Vincent" }),
 ]);
 
-// [
-//   { name: "Olivier" },
-//   { name: "Vincent" },
-// ]
-list.toImmutable();
+// [{ name: "Olivier" }, { name: "Vincent" }]
+list.toJSON();
 ```
 
 <PropertiesList title="Returns">
-  <PropertiesListItem name="immutableStructure" type="object">
-    Returns a JavaScript object in the shape of your data structure. `ListList`
-    is converted to an array, `LiveObject` to an object, and `LiveMap` to a map.
+  <PropertiesListItem name="snapshot" type="array">
+    A plain JSON-compatible array. Always serializable — `JSON.stringify()`
+    works out of the box.
   </PropertiesListItem>
 </PropertiesList>
 
 <PropertiesListEmpty title="Arguments">_None_</PropertiesListEmpty>
 
-### toArray [#LiveList.toArray]
+### toImmutable [#LiveList.toImmutable]
 
-<Banner title="Will be deprecated in the future">
+<Banner title="Removed in 3.18" type="warning">
 
-Starting with 0.18, we recommend [`toImmutable`][] instead. It’s faster, cached,
-and leads to fewer surprises.
+This method has been replaced by [`.toJSON()`](#LiveList.toJSON), which returns
+plain objects instead of `Map` instances for `LiveMap` values, making the result
+always valid JSON. Please migrate to `.toJSON()`.
 
 </Banner>
 
-Transforms the `LiveList` into a normal JavaScript array.
+### toArray [#LiveList.toArray]
 
-```ts
-const list = new LiveList(["🦁", "🦊", "🐵"]);
-list.toArray();
-// ["🦁", "🦊", "🐵"]
-```
+<Banner title="Deprecated" type="warning">
 
-Please note that this method won’t recursively convert Live structures, which
-may be surprising:
+Use [`.toJSON()`](#LiveList.toJSON) instead. It’s faster, cached, and deeply
+converts all nested Live structures.
 
-```ts
-const list = new LiveList([
-  new LiveObject({ firstName: "Grace", lastName: "Hopper" }),
-]);
-list.toArray();
-// [ <LiveObject instance> ]  // ❗️
-```
+</Banner>
 
 ## Resolvers
 
@@ -6029,12 +6440,12 @@ const user = room.getSelf();
   <PropertiesListItem name="canWrite" type="boolean">
     `true` if the user can mutate the Room’s Storage and/or YDoc, `false` if
     they can only read but not mutate it. Set via your [room
-    permissions](/docs/authentication#Room-permissions).
+    permissions](/docs/authentication#id-token-room-permissions).
   </PropertiesListItem>
   <PropertiesListItem name="canComment" type="boolean">
     `true` if the user can leave a comment in the room, `false` if they can only
     read comments but not leave them. Set via your [room
-    permissions](/docs/authentication#Room-permissions).
+    permissions](/docs/authentication#id-token-room-permissions).
   </PropertiesListItem>
 </PropertiesList>
 
@@ -6049,7 +6460,6 @@ const user = room.getSelf();
 [`liveobject`]: /docs/api-reference/liveblocks-client#LiveObject
 [`lostconnectiontimeout`]:
   /docs/api-reference/liveblocks-client#createClientLostConnectionTimeout
-[`toimmutable`]: /docs/api-reference/liveblocks-client#LiveObject.toImmutable
 [`node-fetch`]: https://npmjs.com/package/node-fetch
 [`room.broadcastevent`]:
   /docs/api-reference/liveblocks-client#Room.broadcastEvent

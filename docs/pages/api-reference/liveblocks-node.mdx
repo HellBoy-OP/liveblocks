@@ -49,7 +49,7 @@ const { body, status } = await liveblocks.identifyUser({
 ```
 
 <Banner>
-  Learn how to [get started with ID tokens](/docs/authentication).
+  Learn how to [get started with ID tokens](/docs/authentication#id-token).
 </Banner>
 
 A number of options are also available, enabling you to set up permissions and
@@ -61,8 +61,8 @@ const { body, status } = await liveblocks.identifyUser(
     // Required, the current user's ID
     userId: "marie@example.com",
 
-    // Optional, only view resources on this tenant
-    tenantId: "acme-corp",
+    // Optional, only view resources on this organization
+    organizationId: "acme-corp",
 
     // Optional, used to provision room access on group level
     groupIds: ["marketing", "engineering"],
@@ -78,13 +78,23 @@ const { body, status } = await liveblocks.identifyUser(
 );
 ```
 
+<Banner title="Don't cache tokens" type="warning">
+
+Never cache your access token authentication endpoint, as your client will not
+function correctly. The Liveblocks client will cache results for you, only
+making requests to the endpoint if necessary, such as when the token has
+expired.
+
+</Banner>
+
 ##### Granting ID token permissions
 
 You can pass additional options to `identifyUser`, enabling you to create
-complex [workspace permissions](/docs/authentication#permissions) and
-[room permissions](/docs/authentication#Room-permissions). For example, this
-user can only see resources in the `acme-corp` workspace, and they’re part of a
-`marketing` rooms group within it.
+complex
+[workspace permissions](/docs/authentication#id-token-workspace-permissions) and
+[room permissions](/docs/authentication#id-token-room-permissions). For example,
+this user can only see resources in the `acme-corp` workspace, and they’re part
+of a `marketing` rooms group within it.
 
 ```ts
 const { body, status } = await liveblocks.identifyUser({
@@ -93,7 +103,7 @@ const { body, status } = await liveblocks.identifyUser({
 
   // Optional, only view resources on this workspace
   // +++
-  tenantId: "acme-corp",
+  organizationId: "acme-corp",
   // +++
 
   // Optional, used to provision room access on group level
@@ -104,7 +114,8 @@ const { body, status } = await liveblocks.identifyUser({
 ```
 
 <Banner>
-  Learn more about [ID token permissions](/docs/authentication#permissions).
+  Learn more about [ID token
+  permissions](/docs/authentication#id-token-room-permissions).
 </Banner>
 
 ##### Text editor user data
@@ -174,10 +185,11 @@ console.log(currentUser.info.avatar);
 The purpose of this API is to help you implement your custom authentication back
 end (i.e. the _server_ part of the diagram). You use the
 `liveblocks.identifyUser()` API if you’d like to issue
-[ID tokens](/docs/authentication/id-token) from your back end. An ID token does
-not grant any permissions in the token directly. Instead, it only securely
-identifies your user, and then uses any permissions set via the [Permissions
-REST API][] to decide whether to allow the user on a room-by-room basis.
+[ID tokens](/docs/authentication#id-token-authenticating) from your back end. An
+ID token does not grant any permissions in the token directly. Instead, it only
+securely identifies your user, and then uses any permissions set via the
+[Permissions REST API][] to decide whether to allow the user on a room-by-room
+basis.
 
 Use this approach if you’d like Liveblocks to be the source of truth for your
 user’s permissions.
@@ -205,8 +217,8 @@ const { body, status } = await liveblocks.identifyUser(
   {
     userId: "marie@example.com", // Required, user ID from your DB
     groupIds: ["marketing", "engineering"],
-    // Optional, identify the user in a specific tenant
-    tenantId: "acme-corp",
+    // Optional, identify the user in a specific organization
+    organizationId: "acme-corp",
   },
 
   // Optional
@@ -230,8 +242,8 @@ assigning group permissions.
 These are arbitrary identifiers that make sense to your app, and that you can
 refer to in the [Permissions REST API][] when assigning group permissions.
 
-`tenantId` (optional) is the tenant for this user, will be set to `default` if
-not provided.
+`organizationId` (optional) is the organization for this user, will be set to
+`default` if not provided.
 
 `userInfo` (optional) is any custom JSON value, which you can use to attach
 static metadata to this user’s session. This will be publicly visible to all
@@ -242,7 +254,7 @@ their avatar URL.
 
 Here’s a real-world example of ID tokens in a Next.js route handler/endpoint.
 You can find examples for other frameworks in our
-[authentication section](/docs/authentication/id-token).
+[authentication section](/docs/authentication#select-your-framework).
 
 ```ts file="Next.js"
 import { Liveblocks } from "@liveblocks/node";
@@ -307,8 +319,8 @@ const session = liveblocks.prepareSession(
   // Required, the current user's ID
   "marie@example.com",
   {
-    // Optional, only view resources on this tenant
-    tenantId: "acme-corp",
+    // Optional, only view resources on this organization
+    organizationId: "acme-corp",
 
     // Optional, used to provision room access on group level
     groupIds: ["marketing"],
@@ -322,6 +334,15 @@ const session = liveblocks.prepareSession(
   }
 );
 ```
+
+<Banner title="Don't cache tokens" type="warning">
+
+Never cache your access token authentication endpoint, as your client will not
+function correctly. The Liveblocks client will cache results for you, only
+making requests to the endpoint if necessary, such as when the token has
+expired.
+
+</Banner>
 
 ##### Granting access token permissions
 
@@ -337,14 +358,14 @@ const session = liveblocks.prepareSession(
 );
 
 // Giving access to an individual rooms
-session.allow("room-id-1", session.FULL_ACCESS);
+session.allow("room-id-1", ["*:write"]);
 
 // Giving read-only access to this room
-session.allow("room-id-2", session.READ_ACCESS);
+session.allow("room-id-2", ["*:read"]);
 
 // Giving access to multiple rooms with a wildcard
 // `design-room-1`, `design-room-2`, etc.
-session.allow("design-room:*", session.FULL_ACCESS);
+session.allow("design-room:*", ["*:write"]);
 ```
 
 <Banner>
@@ -353,19 +374,20 @@ session.allow("design-room:*", session.FULL_ACCESS);
 </Banner>
 
 Additionally, you can pass additional options to `prepareSession`, enabling you
-to create complex permissions using [tenants](/docs/authentication/tenants) and
+to create complex permissions using
+[organizations](/docs/authentication/organizations) and
 [accesses](/docs/authentication/access-tokens/permissions). For example, this
-user can only see resources in the `acme-corp` tenant, and they’re part of a
-`marketing` group within it.
+user can only see resources in the `acme-corp` organization, and they're part of
+a `marketing` group within it.
 
 ```ts
 const session = liveblocks.prepareSession(
   // Required, the current user's ID
   "marie@example.com",
   {
-    // Optional, only view resources on this tenant
+    // Optional, only view resources on this organization
     // +++
-    tenantId: "acme-corp",
+    organizationId: "acme-corp",
     // +++
 
     // Optional, used to provision room access on group level
@@ -474,8 +496,8 @@ To implement your back end, follow these steps:
             name: "Marie",
             avatar: "https://example.com/avatar/marie.jpg",
           },
-          // Optional, authenticate this user on a specific tenant
-          tenantId: "acme-corp",
+          // Optional, authenticate this user on a specific organization
+          organizationId: "acme-corp",
         }
       );
       ```
@@ -489,7 +511,7 @@ To implement your back end, follow these steps:
       publicly visible to all other people in the room. Useful for
       metadata like the user’s full name, or their avatar URL.
 
-      The `tenantId` (optional) is the tenant for this session, will be set to `default` if not provided.
+      The `organizationId` (optional) is the organization for this session, will be set to `default` if not provided.
 
     </StepContent>
 
@@ -499,10 +521,10 @@ To implement your back end, follow these steps:
     <StepTitle>Decide which permissions to allow this session</StepTitle>
     <StepContent>
       ```ts showLineNumbers={false}
-      session.allow("my-room-1", session.FULL_ACCESS);
-      session.allow("my-room-2", session.FULL_ACCESS);
-      session.allow("my-room-3", session.FULL_ACCESS);
-      session.allow("my-team:*", session.READ_ACCESS);
+      session.allow("my-room-1", ["*:write"]);
+      session.allow("my-room-2", ["*:write"]);
+      session.allow("my-room-3", ["*:write"]);
+      session.allow("my-team:*", ["*:read"]);
       ```
 
       <Banner title="Be diligent" type="warning">
@@ -566,7 +588,7 @@ export async function POST(request: Request) {
   // Implement your own security, and give the user access to the room
   const { room } = await request.json();
   if (room && __shouldUserHaveAccess__(user, room)) {
-    session.allow(room, session.FULL_ACCESS);
+    session.allow(room, ["*:write"]);
   }
 
   // Retrieve a token from the Liveblocks servers and pass it to the
@@ -624,8 +646,8 @@ const { data: rooms, nextCursor } = await liveblocks.getRooms({
     },
   },
 
-  // Optional, authenticate this user on a specific tenant
-  tenantId: "my-tenant-id",
+  // Optional, authenticate this user on a specific organization
+  organizationId: "my-organization-id",
 
   // Optional, cursor used for pagination, use `nextCursor` from the previous page's response
   startingAfter: "L3YyL3Jvb21z...",
@@ -747,15 +769,16 @@ rooms to delete.
 #### Liveblocks.createRoom [#post-rooms]
 
 Programmatically creates a new room from a room ID. The `defaultAccesses` option
-is required. Setting `defaultAccesses` to `["room:write"]` creates a public
-room, whereas setting it to `[]` will create a private room that needs
-[ID token permission to enter](/docs/authentication/id-token). This is a wrapper
-around the [Create Room API](/docs/api-reference/rest-api-endpoints#post-rooms)
-and returns the same response.
+is required. Setting `defaultAccesses` to `["*:write"]` creates a public room,
+whereas setting it to `[]` will create a private room that needs
+[ID token permission to enter](/docs/authentication#id-token-room-permissions).
+This is a wrapper around the
+[Create Room API](/docs/api-reference/rest-api-endpoints#post-rooms) and returns
+the same response.
 
 ```ts
 const room = await liveblocks.createRoom("my-room-id", {
-  defaultAccesses: ["room:write"],
+  defaultAccesses: ["*:write"],
 });
 
 // { type: "room", id: "my-room-id", metadata: {...}, ... }
@@ -767,18 +790,18 @@ and attach custom metadata.
 
 ```ts
 const room = await liveblocks.createRoom("my-room-id", {
-  // The default room permissions. `[]` for private, `["room:write"]` for public.
+  // The default room permissions. `[]` for private, `["*:write"]` for public.
   defaultAccesses: [],
 
   // Optional, the room's group ID permissions
   groupsAccesses: {
-    design: ["room:write"],
-    engineering: ["room:presence:write", "room:read"],
+    design: ["*:write"],
+    engineering: ["*:read"],
   },
 
   // Optional, the room's user ID permissions
   usersAccesses: {
-    "my-user-id": ["room:write"],
+    "my-user-id": ["*:write"],
   },
 
   // Optional, custom metadata to attach to the room
@@ -786,14 +809,15 @@ const room = await liveblocks.createRoom("my-room-id", {
     myRoomType: "whiteboard",
   },
 
-  // Optional, create it on a specific tenant
-  tenantId: "acme-corp",
+  // Optional, create it on a specific organization
+  organizationId: "acme-corp",
 });
 ```
 
 Group and user permissions are only used with
 [ID token authorization](/docs/api-reference/liveblocks-node#id-tokens), learn
-more about [managing permission with ID tokens](/docs/authentication/id-token).
+more about
+[managing permission with ID tokens](/docs/authentication#id-token-room-permissions).
 
 #### Liveblocks.getRoom [#get-rooms-roomId]
 
@@ -812,16 +836,16 @@ console.log(room);
 #### Liveblocks.getOrCreateRoom [#get-or-create-rooms-roomId]
 
 Get a room by its ID. If the room doesn’t exist, create it instead. The
-`defaultAccesses` option is required. Setting `defaultAccesses` to
-`["room:write"]` creates a public room, whereas setting it to `[]` will create a
-private room that needs
-[ID token permission to enter](/docs/authentication/id-token). Returns the same
-response as the
+`defaultAccesses` option is required. Setting `defaultAccesses` to `["*:write"]`
+creates a public room, whereas setting it to `[]` will create a private room
+that needs
+[ID token permission to enter](/docs/authentication#id-token-room-permissions).
+Returns the same response as the
 [Create Room API](/docs/api-reference/rest-api-endpoints#post-rooms).
 
 ```ts
 const room = await liveblocks.getOrCreateRoom("my-room-id", {
-  defaultAccesses: ["room:write"],
+  defaultAccesses: ["*:write"],
 });
 
 // { type: "room", id: "my-room-id", metadata: {...}, ... }
@@ -833,18 +857,18 @@ and attach custom metadata.
 
 ```ts
 const room = await liveblocks.getOrCreateRoom("my-room-id", {
-  // The default room permissions. `[]` for private, `["room:write"]` for public.
+  // The default room permissions. `[]` for private, `["*:write"]` for public.
   defaultAccesses: [],
 
   // Optional, the room's group ID permissions
   groupsAccesses: {
-    design: ["room:write"],
-    engineering: ["room:presence:write", "room:read"],
+    design: ["*:write"],
+    engineering: ["*:read"],
   },
 
   // Optional, the room's user ID permissions
   usersAccesses: {
-    "my-user-id": ["room:write"],
+    "my-user-id": ["*:write"],
   },
 
   // Optional, custom metadata to attach to the room
@@ -852,14 +876,15 @@ const room = await liveblocks.getOrCreateRoom("my-room-id", {
     myRoomType: "whiteboard",
   },
 
-  // Optional, create it on a specific tenant
-  tenantId: "acme-corp",
+  // Optional, create it on a specific organization
+  organizationId: "acme-corp",
 });
 ```
 
 Group and user permissions are only used with
 [ID token authorization](/docs/api-reference/liveblocks-node#id-tokens), learn
-more about [managing permission with ID tokens](/docs/authentication/id-token).
+more about
+[managing permission with ID tokens](/docs/authentication#id-token-room-permissions).
 
 #### Liveblocks.updateRoom [#post-rooms-roomId]
 
@@ -884,18 +909,18 @@ delete the property.
 
 ```ts
 const room = await liveblocks.updateRoom("my-room-id", {
-  // Optional, update the default room permissions. `[]` for private, `["room:write"]` for public.
+  // Optional, update the default room permissions. `[]` for private, `["*:write"]` for public.
   defaultAccesses: [],
 
   // Optional, update the room's group ID permissions
   groupsAccesses: {
-    design: ["room:write"],
-    engineering: ["room:presence:write", "room:read"],
+    design: ["*:write"],
+    engineering: ["*:read"],
   },
 
   // Optional, update the room's user ID permissions
   usersAccesses: {
-    "my-user-id": ["room:write"],
+    "my-user-id": ["*:write"],
   },
 
   // Optional, custom metadata to update on the room
@@ -907,16 +932,17 @@ const room = await liveblocks.updateRoom("my-room-id", {
 
 Group and user permissions are only used with
 [ID token authorization](/docs/api-reference/liveblocks-node#id-tokens), learn
-more about [managing permission with ID tokens](/docs/authentication/id-token).
+more about
+[managing permission with ID tokens](/docs/authentication#id-token-room-permissions).
 
 #### Liveblocks.upsertRoom [#upsert-rooms-roomId]
 
 Update a room’s properties by its ID. If the room doesn’t exist, create it
 instead. The `defaultAccesses` option is required. Setting `defaultAccesses` to
-`["room:write"]` creates a public room, whereas setting it to `[]` will create a
+`["*:write"]` creates a public room, whereas setting it to `[]` will create a
 private room that needs
-[ID token permission to enter](/docs/authentication/id-token). Returns the same
-response as the
+[ID token permission to enter](/docs/authentication#id-token-room-permissions).
+Returns the same response as the
 [Create Room API](/docs/api-reference/rest-api-endpoints#post-rooms).
 
 ```ts
@@ -927,7 +953,7 @@ const room = await liveblocks.upsertRoom("my-room-id", {
   },
   // These fields will only be set when the room will get created
   create: {
-    defaultAccesses: ["room:write"],
+    defaultAccesses: ["*:write"],
   },
 });
 
@@ -941,18 +967,18 @@ permissions and attach custom metadata.
 ```ts
 const room = await liveblocks.upsertRoom("my-room-id", {
   update: {
-    // The default room permissions. `[]` for private, `["room:write"]` for public.
+    // The default room permissions. `[]` for private, `["*:write"]` for public.
     defaultAccesses: [],
 
     // Optional, the room's group ID permissions
     groupsAccesses: {
-      design: ["room:write"],
-      engineering: ["room:presence:write", "room:read"],
+      design: ["*:write"],
+      engineering: ["*:read"],
     },
 
     // Optional, the room's user ID permissions
     usersAccesses: {
-      "my-user-id": ["room:write"],
+      "my-user-id": ["*:write"],
     },
 
     // Optional, custom metadata to attach to the room
@@ -965,7 +991,8 @@ const room = await liveblocks.upsertRoom("my-room-id", {
 
 Group and user permissions are only used with
 [ID token authorization](/docs/api-reference/liveblocks-node#id-tokens), learn
-more about [managing permission with ID tokens](/docs/authentication/id-token).
+more about
+[managing permission with ID tokens](/docs/authentication#id-token-room-permissions).
 
 #### Liveblocks.deleteRoom [#delete-rooms-roomId]
 
@@ -1157,6 +1184,37 @@ useEventListener(({ event, user, connectionId }) => {
 });
 ```
 
+#### Liveblocks.setPresence [#post-rooms-roomId-presence]
+
+Sets ephemeral presence for a user in a room without requiring a WebSocket
+connection. The presence data automatically expires after the specified TTL
+(time-to-live). This is useful for scenarios like showing an AI agent’s presence
+in a room. The presence is broadcast to all connected users in the room. This is
+a wrapper around the
+[Set Presence API](/docs/api-reference/rest-api-endpoints#post-rooms-roomId-presence)
+and returns no response on success.
+
+```ts
+await liveblocks.setPresence("my-room-id", {
+  userId: "agent-123",
+  data: {
+    status: "active",
+    cursor: { x: 100, y: 200 },
+  },
+  userInfo: {
+    name: "AI Assistant",
+    avatar: "https://example.com/avatar.png",
+  },
+  ttl: 60, // optional, 2–3599 seconds
+});
+```
+
+- **userId** (required): The ID of the user to set presence for.
+- **data** (required): Presence data as a JSON object.
+- **userInfo** (optional): Metadata about the user or agent
+- **ttl** (optional): Time-to-live in seconds (minimum 2, maximum 3599).
+  Defaults to 60. After this duration, the presence expires automatically.
+
 ### Groups
 
 Groups allow you to manage users for group mentions in comments and text
@@ -1174,7 +1232,7 @@ const group = await liveblocks.createGroup({
   memberIds: ["alice@example.com", "bob@example.com"],
 });
 
-// { type: "group", id: "engineering-team", tenantId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
+// { type: "group", id: "engineering-team", organizationId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
 console.log(group);
 ```
 
@@ -1186,8 +1244,8 @@ const group = await liveblocks.createGroup({
   // Optional, add members when creating the group
   memberIds: ["charlie@example.com"],
 
-  // Optional, create it on a specific tenant
-  tenantId: "company-123",
+  // Optional, create it on a specific organization
+  organizationId: "company-123",
 
   // Optional, set group scopes (defaults to { mention: true })
   scopes: { mention: true },
@@ -1206,7 +1264,7 @@ const group = await liveblocks.getGroup({
   groupId: "engineering-team",
 });
 
-// { type: "group", id: "engineering-team", tenantId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
+// { type: "group", id: "engineering-team", organizationId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
 console.log(group);
 ```
 
@@ -1220,7 +1278,7 @@ the same response.
 const { data: groups, nextCursor } = await liveblocks.getGroups();
 
 // A list of groups
-// [{ type: "group", id: "engineering-team", tenantId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }, ...]
+// [{ type: "group", id: "engineering-team", organizationId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }, ...]
 console.log(groups);
 
 // A pagination cursor for the next page
@@ -1278,7 +1336,7 @@ const updatedGroup = await liveblocks.addGroupMembers({
   memberIds: ["david@example.com", "eve@example.com"],
 });
 
-// { type: "group", id: "engineering-team", tenantId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
+// { type: "group", id: "engineering-team", organizationId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
 console.log(updatedGroup);
 ```
 
@@ -1294,7 +1352,7 @@ const updatedGroup = await liveblocks.removeGroupMembers({
   memberIds: ["david@example.com"],
 });
 
-// { type: "group", id: "engineering-team", tenantId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
+// { type: "group", id: "engineering-team", organizationId: "acme-corp", createdAt: "...", updatedAt: "...", scopes: { mention: true }, members: [...] }
 console.log(updatedGroup);
 ```
 
@@ -1388,7 +1446,7 @@ and returns the same response.
 ```ts
 // Create a new room
 const room = await liveblocks.createRoom("my-room-id", {
-  defaultAccesses: ["room:write"],
+  defaultAccesses: ["*:write"],
 });
 
 // Initialize Storage
@@ -1408,7 +1466,7 @@ import { toPlainLson, LiveList, LiveObject } from "@liveblocks/client";
 
 // Create a new room
 const room = await liveblocks.createRoom("my-room-id", {
-  defaultAccesses: ["room:write"],
+  defaultAccesses: ["*:write"],
 });
 
 // If this were your Storage type...
@@ -1437,7 +1495,7 @@ It’s also possible to create plain LSON manually, without the helper function.
 ```ts highlight="9-11,17-23"
 // Create a new room
 const room = await liveblocks.createRoom("my-room-id", {
-  defaultAccesses: ["room:write"],
+  defaultAccesses: ["*:write"],
 });
 
 // If this were your Storage type...
@@ -1772,146 +1830,118 @@ const binaryYjsUpdate = await liveblocks.getYjsDocumentAsBinaryUpdate(
 Read the [Yjs documentation](https://docs.yjs.dev/api/document-updates) to learn
 more about using binary updates.
 
-### Schema validation
+### Version History
 
-#### Liveblocks.createSchema [#post-create-new-schema]
+#### Liveblocks.getVersionHistory [#get-version-history]
 
-Creates a schema that can be used to enforce a room’s Storage data structure.
-The schema consists of a unique name, and a body which specifies the data shape
-of the room in Liveblocks
-[schema syntax](/docs/platform/schema-validation/syntax). This is a wrapper
+Returns a room’s version history snapshots, sorted by creation date from newest
+to oldest. Throws an error if the room isn’t found. This is a wrapper around the
+[Get Version History API](/docs/api-reference/rest-api-endpoints#get-version-history)
+and returns the same response.
+
+```ts
+const { data: versions, nextCursor } = await liveblocks.getVersionHistory(
+  "my-room-id",
+  {
+    // Optional, defaults to 20
+    limit: 20,
+
+    // Optional, used for pagination
+    cursor: "eyJjcmVhdGVkQXQi...",
+  }
+);
+```
+
+#### Liveblocks.createVersionHistorySnapshot [#create-version-history-snapshot]
+
+Creates a new version history snapshot of a room, capturing both its Storage and
+Yjs documents. Throws an error if the room isn’t found. This is a wrapper around
+the
+[Create Version History Snapshot API](/docs/api-reference/rest-api-endpoints#create-version-history-snapshot)
+and returns the same response.
+
+```ts
+const { data } =
+  await liveblocks.createVersionHistorySnapshot("my-room-id");
+
+// { id: "vh_d75sF3..." }
+console.log(data);
+```
+
+#### Liveblocks.getYjsVersion [#get-yjs-version]
+
+Returns a specific version of a room’s Yjs document encoded as a binary Yjs
+update. Throws an error if the room or version isn’t found. This is a wrapper
 around the
-[Create Schema API](/docs/api-reference/rest-api-endpoints#post-create-new-schema)
+[Get Yjs Document Version API](/docs/api-reference/rest-api-endpoints#get-yjs-version)
 and returns the same response.
 
 ```ts
-const schemaBody = `
-  type Storage {
-    names: LiveList<string>
-  }
-`;
-
-const schema = await liveblocks.createSchema("my-schema-name", schemaBody);
-
-// { id: "my-schema-name@1", name: "my-schema-name", version: 1, ... }
-console.log(schema);
+const binaryYjsUpdate = await liveblocks.getYjsVersion({
+  roomId: "my-room-id",
+  versionId: "vh_d75sF3...",
+});
 ```
 
-Read the [schema validation](/docs/platform/schema-validation) page to learn
-more.
+#### Liveblocks.deleteVersion [#delete-version]
 
-#### Liveblocks.getSchema [#get-create-new-schema]
-
-Returns a schema from its ID. A schema’s ID is a combination of its name and
-version, for example the ID for version `1` of `my-schema-name` is
-`my-schema-name@1`. This is a wrapper around the
-[Get Schema API](/docs/api-reference/rest-api-endpoints#get-create-new-schema)
-and returns the same response.
-
-```ts
-const updatedBody = `
-  type Storage {
-    names: LiveMap<string, string>
-  }
-`;
-
-const schema = await liveblocks.getSchema("my-schema-name@1", updatedBody);
-
-// { id: "my-schema-name@1", name: "my-schema-name", version: 1, ... }
-console.log(schema);
-```
-
-Read the [schema validation](/docs/platform/schema-validation) page to learn
-more.
-
-#### Liveblocks.updateSchema [#put-update-new-schema]
-
-Updates a schema’s body and increments its version. A schema’s body specifies
-the data shape of the room in Liveblocks
-[schema syntax](/docs/platform/schema-validation/syntax). Find the schema by its
-ID, a combination of its name and version, for example the ID for version `1` of
-`my-schema-name` is `my-schema-name@1`. This is a wrapper around the
-[Update Schema API](/docs/api-reference/rest-api-endpoints#put-update-new-schema)
-and returns the same response.
-
-```ts
-const schema = await liveblocks.updateSchema("my-schema-name@1");
-
-// { id: "my-schema-name@1", name: "my-schema-name", version: 1, ... }
-console.log(schema);
-```
-
-Read the [schema validation](/docs/platform/schema-validation) page to learn
-more.
-
-#### Liveblocks.deleteSchema [#delete-a-schema]
-
-Deletes a schema. This is only allowed if the schema is not attached to a room.
-Find the schema by its ID, a combination of its name and version, for example
-the ID for version `1` of `my-schema-name` is `my-schema-name@1`. This is a
-wrapper around the
-[Delete Schema API](/docs/api-reference/rest-api-endpoints#delete-a-schema) and
+Permanently deletes a version from a room’s history. Throws an error if the room
+or version isn’t found. This is a wrapper around the
+[Delete Version API](/docs/api-reference/rest-api-endpoints#delete-version) and
 returns no response.
 
 ```ts
-await liveblocks.deleteSchema("my-schema-name@1");
+await liveblocks.deleteVersion({
+  roomId: "my-room-id",
+  versionId: "vh_d75sF3...",
+});
 ```
 
-Read the [schema validation](/docs/platform/schema-validation) page to learn
-more.
+### Attachments
 
-#### Liveblocks.getSchemaByRoomId [#get-new-schema]
+#### Liveblocks.getAttachment [#get-rooms-roomId-attachments-attachmentId]
 
-Returns the schema attached to a room. Throws an error if the room isn’t found.
-This is a wrapper around the
-[Get Schema By Room API](/docs/api-reference/rest-api-endpoints#get-new-schema)
-and returns the same response.
+Returns an attachment's metadata and a presigned download URL. Throws an error
+if the room or attachment isn't found.
 
 ```ts
-const schema = await liveblocks.getSchemaByRoomId("my-room-id");
+const attachment = await liveblocks.getAttachment({
+  roomId: "my-room-id",
+  attachmentId: "at_d75sF3...",
+});
 
-// { id: "my-schema-name@1", name: "my-schema-name", version: 1, ... }
-console.log(schema);
+// { type: "attachment", id: "at_d75sF3...", name: "document.pdf", ... }
+console.log(attachment);
+
+// The presigned URL to download the attachment
+console.log(attachment.url);
 ```
 
-Read the [schema validation](/docs/platform/schema-validation) page to learn
-more.
+Returns an `AttachmentWithUrl` object with the following properties:
 
-#### Liveblocks.attachSchemaToRoom [#post-attach-schema-to-room]
-
-Attaches a schema to a room, and instantly enables runtime schema validation in
-it. Attach the schema by its ID, a combination of its name and version, for
-example the ID for version `1` of `my-schema-name` is `my-schema-name@1`. This
-is a wrapper around the
-[Attach Schema to a Room API](/docs/api-reference/rest-api-endpoints#post-attach-schema-to-room)
-and returns the same response.
-
-If the current contents of the room’s Storage do not match the schema, attaching
-will fail and the error message will give details on why the schema failed to
-attach. It’ll also throw an error if the room isn’t found.
-
-```ts
-const schema = await liveblocks.attachSchemaToRoom(
-  "my-room-id",
-  "my-schema-name@1"
-);
-
-// { id: "my-schema-name@1", name: "my-schema-name", version: 1, ... }
-console.log(schema);
-```
-
-Read the [schema validation](/docs/platform/schema-validation) page to learn
-more.
-
-#### Liveblocks.detachSchemaFromRoom [#delete-detach-schema-to-room]
-
-Detaches a schema from a room. This is a wrapper around the
-[Detach Schema from a Room API](/docs/api-reference/rest-api-endpoints#post-detach-schema-to-room)
-and returns no response.
-
-```ts
-await liveblocks.detachSchemaFromRoom("my-room-id");
-```
+<PropertiesList>
+  <PropertiesListItem name="type" type={'"attachment"'}>
+    The type of the object.
+  </PropertiesListItem>
+  <PropertiesListItem name="id" type="string">
+    The attachment ID (starts with "at_").
+  </PropertiesListItem>
+  <PropertiesListItem name="name" type="string">
+    The name of the attachment file.
+  </PropertiesListItem>
+  <PropertiesListItem name="mimeType" type="string">
+    The MIME type of the attachment.
+  </PropertiesListItem>
+  <PropertiesListItem name="size" type="number">
+    The size of the attachment in bytes.
+  </PropertiesListItem>
+  <PropertiesListItem name="url" type="string">
+    A presigned URL to download the attachment.
+  </PropertiesListItem>
+  <PropertiesListItem name="expiresAt" type="string">
+    The expiration time of the presigned URL.
+  </PropertiesListItem>
+</PropertiesList>
 
 ### Comments
 
@@ -1931,9 +1961,9 @@ const { data: threads } = await liveblocks.getThreads({
 console.log(threads);
 ```
 
-It’s also possible to filter threads by their string, boolean, and number
-metadata using a query parameter. You can also pass `startsWith` to match the
-start of a string.
+It’s also possible to filter threads by visibility, resolved status, and their
+string, boolean, and number metadata using a query parameter. You can also pass
+`startsWith` to match the start of a string.
 
 ```ts
 const { data: threads } = await liveblocks.getThreads({
@@ -1943,6 +1973,10 @@ const { data: threads } = await liveblocks.getThreads({
   query: {
     // Optional, filter based on resolved status
     resolved: false,
+
+    // Optional, filter based on visibility
+    visibility: "private",
+
     // Optional, filter for metadata values
     metadata: {
       status: "open",
@@ -1964,8 +1998,9 @@ instead of a `query` object.
 
 #### Liveblocks.createThread [#post-rooms-roomId-threads]
 
-Creates a new thread within a specific room, using room ID and thread data. This
-is a wrapper around the
+Creates a new thread within a specific room, using room ID and thread data.
+Threads are public by default, but can be created as private by passing
+`visibility: "private"`. This is a wrapper around the
 [Create Thread API](/docs/api-reference/rest-api-endpoints#post-rooms-roomId-threads)
 and returns the new thread.
 
@@ -2022,8 +2057,15 @@ const thread = await liveblocks.createThread({
 });
 ```
 
-This method has a number of options, allowing for custom metadata and a creation
-date for the comment.
+<Banner title="Creating a comment from Markdown">
+
+You can also convert a Markdown string to a `CommentBody` with
+[`markdownToCommentBody`](#markdown-to-comment-body).
+
+</Banner>
+
+This method has a number of options, allowing for custom metadata, thread
+visibility, and a creation date for the comment.
 
 ```ts
 const thread = await liveblocks.createThread({
@@ -2036,6 +2078,9 @@ const thread = await liveblocks.createThread({
       page: 3,
       pinned: true,
     },
+
+    // Optional, defaults to "public"
+    visibility: "private",
 
     // Data for the first comment in the thread
     comment: {
@@ -2442,6 +2487,13 @@ const comment = await liveblocks.createComment({
 });
 ```
 
+<Banner title="Creating a comment from Markdown">
+
+You can also convert a Markdown string to a `CommentBody` with
+[`markdownToCommentBody`](#markdown-to-comment-body).
+
+</Banner>
+
 This method has a number of options, including the option to add a custom
 creation date and metadata to the comment.
 
@@ -2565,6 +2617,13 @@ const editedComment = await liveblocks.editComment({
   },
 });
 ```
+
+<Banner title="Creating a comment from Markdown">
+
+You can also convert a Markdown string to a `CommentBody` with
+[`markdownToCommentBody`](#markdown-to-comment-body).
+
+</Banner>
 
 #### Liveblocks.deleteComment [#delete-rooms-roomId-threads-threadId-comments-commentId]
 
@@ -2743,8 +2802,8 @@ const { data: subscriptionSettings, nextCursor } =
   await liveblocks.getUserRoomSubscriptionSettings({
     userId: "steven@example.com",
 
-    // Optional, filter for a specific tenant
-    tenantId: "acme-corp",
+    // Optional, filter for a specific organization
+    organizationId: "acme-corp",
   });
 
 console.log(subscriptionSettings);
@@ -2758,6 +2817,172 @@ if (nextCursor) {
     startingAfter: nextCursor,
   });
 }
+```
+
+### Feeds
+
+#### Liveblocks.getFeeds [#get-rooms-roomId-feeds]
+
+Returns a list of feeds in a room. This is a wrapper around the
+[Get Room Feeds API](/docs/api-reference/rest-api-endpoints#get-rooms-roomId-feeds)
+and returns the same response.
+
+```ts
+const { data: feeds } = await liveblocks.getFeeds({
+  roomId: "my-room-id",
+});
+
+// [{ feedId: "feed-1", metadata: {...}, timestamp: 1234567890 }, ...]
+console.log(feeds);
+```
+
+#### Liveblocks.createFeed [#post-rooms-roomId-feed]
+
+Creates a new feed in a room. This is a wrapper around the
+[Create Feed API](/docs/api-reference/rest-api-endpoints#post-rooms-roomId-feed)
+and returns the created feed.
+
+```ts
+const feed = await liveblocks.createFeed({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+
+  // Optional, custom metadata for the feed
+  metadata: {
+    name: "My Feed",
+    channel: true,
+  },
+
+  // Optional, timestamp in milliseconds. Defaults to current time if not provided
+  timestamp: Date.now(),
+});
+
+// { feedId: "my-feed-id", metadata: {...}, timestamp: 1234567890 }
+console.log(feed);
+```
+
+#### Liveblocks.getFeed [#get-rooms-roomId-feeds-feedId]
+
+Returns a feed by its ID. This is a wrapper around the
+[Get Feed API](/docs/api-reference/rest-api-endpoints#get-rooms-roomId-feeds-feedId)
+and returns the same response.
+
+```ts
+const feed = await liveblocks.getFeed({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+});
+
+// { feedId: "my-feed-id", metadata: {...}, timestamp: 1234567890 }
+console.log(feed);
+```
+
+#### Liveblocks.updateFeed [#patch-rooms-roomId-feeds-feedId]
+
+Updates the metadata of a feed. This is a wrapper around the
+[Update Feed API](/docs/api-reference/rest-api-endpoints#patch-rooms-roomId-feeds-feedId).
+
+```ts
+await liveblocks.updateFeed({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+  metadata: {
+    name: "Updated Feed Name",
+    updated: new Date().toISOString(),
+  },
+});
+```
+
+#### Liveblocks.deleteFeed [#delete-rooms-roomId-feeds-feedId]
+
+Deletes a feed. This is a wrapper around the
+[Delete Feed API](/docs/api-reference/rest-api-endpoints#delete-rooms-roomId-feeds-feedId).
+
+```ts
+await liveblocks.deleteFeed({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+});
+```
+
+#### Liveblocks.getFeedMessages [#get-rooms-roomId-feeds-feedId-messages]
+
+Returns a list of messages in a feed. This is a wrapper around the
+[Get Feed Messages API](/docs/api-reference/rest-api-endpoints#get-rooms-roomId-feeds-feedId-messages)
+and returns the same response.
+
+```ts
+const { data: messages } = await liveblocks.getFeedMessages({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+});
+
+// [{ id: "msg-1", timestamp: 1234567890, data: {...} }, ...]
+console.log(messages);
+```
+
+#### Liveblocks.createFeedMessage [#post-rooms-roomId-feeds-feedId-messages]
+
+Creates a new message in a feed. This is a wrapper around the
+[Create Feed Message API](/docs/api-reference/rest-api-endpoints#post-rooms-roomId-feeds-feedId-messages)
+and returns the created message.
+
+```ts
+const message = await liveblocks.createFeedMessage({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+
+  // The message data
+  data: {
+    role: "user",
+    content: "Hello, world!",
+  },
+
+  // Optional, custom message ID. One will be generated if not provided
+  id: "my-message-id",
+
+  // Optional, timestamp in milliseconds. Defaults to current time if not provided
+  timestamp: Date.now(),
+});
+
+// { id: "my-message-id", timestamp: 1234567890, data: {...} }
+console.log(message);
+```
+
+#### Liveblocks.updateFeedMessage [#patch-rooms-roomId-feeds-feedId-messages-messageId]
+
+Updates a feed message. This is a wrapper around the
+[Update Feed Message API](/docs/api-reference/rest-api-endpoints#patch-rooms-roomId-feeds-feedId-messages-messageId).
+
+```ts
+await liveblocks.updateFeedMessage({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+  messageId: "my-message-id",
+
+  // The message data
+  data: {
+    role: "user",
+    content: "Updated content",
+  },
+
+  // Optional, timestamp in milliseconds. Helps prevents race conditions,
+  // messages that arrive after a newer message are ignored
+  updatedAt: Date.now(),
+});
+```
+
+#### Liveblocks.deleteFeedMessage [#delete-rooms-roomId-feeds-feedId-messages-messageId]
+
+Deletes a feed message. This is a wrapper around the
+[Delete Feed Message API](/docs/api-reference/rest-api-endpoints#delete-rooms-roomId-feeds-feedId-messages-messageId).
+
+```ts
+await liveblocks.deleteFeedMessage({
+  roomId: "my-room-id",
+  feedId: "my-feed-id",
+  messageId: "my-message-id",
+});
 ```
 
 ### Notifications
@@ -2781,8 +3006,8 @@ const { data: unreadInboxNotifications, nextCursor } =
     userId: "steven@example.com",
     query: { unread: true },
 
-    // Optional, filter for a specific tenant
-    tenantId: "acme-corp",
+    // Optional, filter for a specific organization
+    organizationId: "acme-corp",
   });
 ```
 
@@ -2828,8 +3053,8 @@ const userId = "steven@example.com";
 
 for await (const item of liveblocks.iterInboxNotifications({
   userId,
-  // Optional, filter for a specific tenant
-  tenantId: "acme-corp",
+  // Optional, filter for a specific organization
+  organizationId: "acme-corp",
 })) {
   console.log(item.id); // in_3dH7sF3...
   console.log(item.kind); // "thread", "textMention", ...
@@ -2884,8 +3109,8 @@ await liveblocks.triggerInboxNotification({
   // Optional, define the room ID the notification was sent from
   roomId: "my-room-id",
 
-  // Optional, trigger it for a specific tenant
-  tenantId: "acme-corp",
+  // Optional, trigger it for a specific organization
+  organizationId: "acme-corp",
 });
 ```
 
@@ -2991,8 +3216,8 @@ Deletes all the user’s inbox notifications. This is a wrapper around the
 ```ts
 await liveblocks.deleteAllInboxNotifications({
   userId: "steven@example.com",
-  // Optional, delete for a specific tenant
-  tenantId: "acme-corp",
+  // Optional, delete for a specific organization
+  organizationId: "acme-corp",
 });
 ```
 
@@ -3165,6 +3390,9 @@ const copilot = await liveblocks.createAiCopilot({
   // Optional, additional knowledge context for the copilot
   knowledgePrompt: "Use our company's style guide when providing examples.",
 
+  // Optional, always retrieve knowledge sources on each query
+  alwaysUseKnowledge: true,
+
   // Required, the AI provider to use
   provider: "openai",
 
@@ -3296,6 +3524,9 @@ const updatedCopilot = await liveblocks.updateAiCopilot("co_abc123...", {
 
   // Optional, update the knowledge prompt
   knowledgePrompt: "Reference our latest guidelines.",
+
+  // Optional, always retrieve knowledge sources on each query
+  alwaysUseKnowledge: true,
 
   // Optional, update provider-specific options (replaces the entire nested options object)
   // Set to null to clear options
@@ -3840,6 +4071,30 @@ await stringifyCommentBody(comment.body, {
 });
 ```
 
+### markdownToCommentBody [#markdown-to-comment-body]
+
+Converts a Markdown string into a `CommentBody` object that can be used to write
+comments with [`createThread`](#post-rooms-roomId-threads),
+[`createComment`](#post-rooms-roomId-threads-threadId-comments), or
+[`editComment`](#post-rooms-roomId-threads-threadId-comments-commentId).
+
+```ts
+import { markdownToCommentBody } from "@liveblocks/node";
+
+const body = markdownToCommentBody(`
+@stacy Can you review this update?
+
+You can add **bold**, _italics_, ~~strikethrough~~, and \`inline code\`.
+
+Read more in [the docs](https://liveblocks.io/docs).
+`);
+```
+
+This is a lossy conversion because `CommentBody` only supports paragraphs,
+inline text formatting (bold, italic, strikethrough, code), links, and
+`@mentions`. Unsupported features like headings, lists, tables, or blockquotes
+are kept as plain text.
+
 ### WebhookHandler [#WebhookHandler]
 
 <Banner title="Need help implementing webhooks?">
@@ -3852,7 +4107,7 @@ within your product, allowing you to react to Liveblocks events as they happen.
 The `WebhookHandler` class is a helper to handle webhook requests from
 Liveblocks.
 
-It’s initialized with a signing secret that you can find in your project’s
+It’s initialized with a webhook secret that you can find in your project’s
 webhook page.
 
 ```js
@@ -3988,4 +4243,4 @@ if (isCustomNotificationEvent(event)) {
 The check is made against the event type and event data kind.
 
 [`room.getothers`]: /docs/api-reference/liveblocks-client#Room.getOthers
-[Permissions REST API]: /docs/authentication/id-token
+[Permissions REST API]: /docs/authentication#id-token-room-permissions

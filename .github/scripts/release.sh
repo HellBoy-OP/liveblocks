@@ -55,25 +55,8 @@ check_is_valid_version () {
 
 ROOT="$(git rev-parse --show-toplevel)"
 
-all_published_pkgnames () {
-    for pkgdir in "${PKGS_TO_RELEASE[@]}"; do
-        jq -r .name "$ROOT/$pkgdir/package.json"
-    done
-}
-
 get_package_name_from_dir () {
     ( cd "$1" && jq -r .name package.json )
-}
-
-update_dependencies_to_new_package_versions () {
-    for pkgname in $( all_published_pkgnames ); do
-      for key in dependencies devDependencies peerDependencies; do
-          currversion="$(jq -r ".${key}.\"${pkgname}\"" package.json)"
-          if [ "$currversion" != "null" -a "$currversion" != '*' ]; then
-              jq ".${key}.\"${pkgname}\" = \"$1\"" package.json | sponge package.json
-          fi
-      done
-    done
 }
 
 update_package_version () {
@@ -83,7 +66,7 @@ update_package_version () {
     PKGNAME="$( get_package_name_from_dir "$PKGDIR" )"
 
     echo "==> Updating package.json version for $PKGNAME"
-    ( cd "$PKGDIR" && npm version "$VERSION" $FORCE_FLAG --no-git-tag-version $WORKSPACES_UPDATE_FLAG && update_dependencies_to_new_package_versions "$2" )
+    ( cd "$PKGDIR" && npm version "$VERSION" $FORCE_FLAG --no-git-tag-version $WORKSPACES_UPDATE_FLAG )
 }
 
 commit_to_git () {
@@ -108,40 +91,106 @@ commit_to_git () {
     ) )
 }
 
+# A "final" release is X.Y.Z with no -prerelease suffix. Pre-releases like
+# 3.19.4-rc2 are intentionally excluded from CHANGELOG heading insertion.
+is_final_release () {
+    [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# True if the given CHANGELOG already has a "## vX.Y.Z" heading for this version.
+changelog_has_heading () {
+    grep -qE "^## v${VERSION//./\\.}( .*)?\$" "$1"
+}
+
+# True if a fresh "## vX.Y.Z" heading is due to be inserted into this CHANGELOG.
+changelog_needs_heading () {
+    is_final_release && [ -f "$1" ] && ! changelog_has_heading "$1"
+}
+
+# Classify the "## vNEXT" section of a CHANGELOG: prints "nonempty", "empty"
+# (immediately followed by another "## " heading or only blank lines), or
+# "missing" (no vNEXT section at all).
+vnext_state () {
+    awk '
+        /^## vNEXT( .*)?$/ { seen = 1; next }
+        seen && /^## /          { print "empty"; found = 1; exit }
+        seen && /[^[:space:]]/  { print "nonempty"; found = 1; exit }
+        END { if (!found) print (seen ? "empty" : "missing") }
+    ' "$1"
+}
+
+# Fail fast (before any version bump) if a heading is due for this release but
+# there are no entries to release under "## vNEXT". A skipped heading
+# (pre-release, or already present) needs no entries and is left alone.
+assert_changelog_ready () {
+    CHANGELOG="$1"
+    changelog_needs_heading "$CHANGELOG" || return 0
+    case "$( vnext_state "$CHANGELOG" )" in
+        nonempty) ;;
+        empty)
+            err "ERROR: No changelog entries under '## vNEXT' in $CHANGELOG."
+            err "Add release notes there before releasing v$VERSION."
+            exit 2 ;;
+        missing)
+            err "ERROR: No '## vNEXT' section found in $CHANGELOG."
+            err "Cannot insert a heading for v$VERSION."
+            exit 2 ;;
+    esac
+}
+
+# Insert a "## vX.Y.Z" heading right below the "vNEXT" section, claiming all
+# accumulated entries for this release. No-op for pre-releases and for versions
+# that already have a heading.
+inject_changelog_heading () {
+    CHANGELOG="$1"
+
+    if ! is_final_release; then
+        echo "==> Skipping CHANGELOG heading for pre-release $VERSION"
+        return
+    fi
+    if changelog_has_heading "$CHANGELOG"; then
+        echo "==> CHANGELOG already has a heading for v$VERSION, leaving as-is"
+        return
+    fi
+
+    echo "==> Adding CHANGELOG heading for v$VERSION"
+    tmp="$(mktemp)"
+    if awk -v ver="$VERSION" '
+        !done && /^## vNEXT( .*)?$/ {
+            print
+            print ""
+            print "## v" ver
+            done = 1
+            next
+        }
+        { print }
+        END { exit (done ? 0 : 3) }
+    ' "$CHANGELOG" > "$tmp"; then
+        mv "$tmp" "$CHANGELOG"
+    else
+        rm -f "$tmp"
+        err "WARNING: Could not find a '## vNEXT' section in"
+        err "$CHANGELOG; skipping CHANGELOG heading insertion."
+    fi
+}
+
 check_is_valid_version "$VERSION"
 
-# Run a fresh `npm i` to ensure the lock file isn't outdated before continuing
-npm install --no-audit
+# Fail fast if a heading is due for this release but vNEXT has no entries
+assert_changelog_ready "$ROOT/CHANGELOG.md"
+
+# Run a fresh install to ensure the lock file isn't outdated before continuing
+pnpm install --no-frozen-lockfile
 git is-clean -v
 
 for PKGDIR in "${PKGS_TO_RELEASE[@]}"; do
     update_package_version "$PKGDIR" "$VERSION"
 done
 
-# Update package-lock.json with newly bumped versions
-npm install --no-audit
+# Update pnpm-lock.yaml with newly bumped versions
+pnpm install --no-frozen-lockfile
 
-# HACK/WORKAROUND:
-# For some reason we don't yet understand, the above npm install commands can
-# sometimes add these "nested" Liveblocks packages. These package folders don't
-# actually exist on disk, and are wrong. The mystery is why they end up in this
-# lockfile.
-# Here, we work around it by loop over each of them and manually removing them
-# from the lockfile.
-for key in $(jq -r '.packages|keys[]' package-lock.json | grep -Ee 'liveblocks-.*/node_modules/@liveblocks'); do
-  jq "del(.packages[\"$key\"])" package-lock.json | sponge package-lock.json
-done
+# Add a CHANGELOG heading for this release if one doesn't exist yet
+inject_changelog_heading "$ROOT/CHANGELOG.md"
 
-# One final cleanup pass
-npm ci --no-audit
-npm install --no-audit
-
-# The following pattern is always indicative of a bug in this script, so let's
-# fail if this is found
-if grep -qEe 'packages/liveblocks-.*/node_modules/@liveblocks' package-lock.json; then
-    err "The lockfile contains a pattern that should not exist"
-    err "Please manually debug this to figure out what went wrong during the update"
-    exit 4
-fi
-
-commit_to_git "${COMMIT_MESSAGE}${VERSION}" "package-lock.json" "packages/" "tools/"
+commit_to_git "${COMMIT_MESSAGE}${VERSION}" "pnpm-lock.yaml" "packages/" "tools/" "CHANGELOG.md"

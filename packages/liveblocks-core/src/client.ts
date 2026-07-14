@@ -4,11 +4,15 @@ import { createApiClient } from "./api-client";
 import { createAuthManager } from "./auth-manager";
 import { isIdle, StopRetrying } from "./connection";
 import { DEFAULT_BASE_URL } from "./constants";
+import { isLiveObject } from "./crdts/liveblocks-helpers";
+import type { LiveObject } from "./crdts/LiveObject";
 import type { LsonObject } from "./crdts/Lson";
 import { linkDevTools, setupDevTools, unlinkDevTools } from "./devtools";
 import type {
   DCM,
   DE,
+  DFM,
+  DFMD,
   DGI,
   DP,
   DRI,
@@ -50,7 +54,6 @@ import type {
   SubscriptionDeleteInfo,
 } from "./protocol/Subscriptions";
 import type {
-  LargeMessageStrategy,
   OpaqueRoom,
   OptionalTupleUnless,
   PartialUnless,
@@ -128,13 +131,6 @@ export type EnterOptions<P extends JsonObject = DP, S extends LsonObject = DS> =
      * the authentication endpoint or connect via WebSocket.
      */
     autoConnect?: boolean;
-
-    /**
-     * @private Preferred storage engine version to use when creating the
-     * room. Only takes effect if the room doesn't exist yet. Version
-     * 2 supports streaming and will become the default in the future.
-     */
-    engine?: 1 | 2;
   }
 
   // Initial presence is only mandatory if the custom type requires it to be
@@ -156,7 +152,7 @@ export type EnterOptions<P extends JsonObject = DP, S extends LsonObject = DS> =
       /**
        * The initial Storage to use when entering a new Room.
        */
-      initialStorage: S | ((roomId: string) => S);
+      initialStorage: S | LiveObject<S> | ((roomId: string) => S | LiveObject<S>);
     }
   >
 >;
@@ -187,6 +183,8 @@ export type PrivateClientApi<
   U extends BaseUserMeta,
   TM extends BaseMetadata,
   CM extends BaseMetadata,
+  FM extends Json = DFM,
+  FMD extends Json = DFMD,
 > = {
   readonly currentUserId: Signal<string | undefined>;
   readonly mentionSuggestionsCache: Map<string, MentionData[]>;
@@ -197,7 +195,12 @@ export type PrivateClientApi<
   readonly getRoomIds: () => string[];
   readonly httpClient: LiveblocksHttpApi<TM, CM>;
   // Type-level helper
-  as<TM2 extends BaseMetadata, CM2 extends BaseMetadata>(): Client<U, TM2, CM2>;
+  as<
+    TM2 extends BaseMetadata,
+    CM2 extends BaseMetadata,
+    FM2 extends Json = FM,
+    FMD2 extends Json = FMD,
+  >(): Client<U, TM2, CM2, FM2, FMD2>;
   // Tracking pending changes globally
   createSyncSource(): SyncSource;
   emitError(context: LiveblocksErrorContext, cause?: Error): void;
@@ -365,6 +368,8 @@ export type Client<
   U extends BaseUserMeta = DU,
   TM extends BaseMetadata = DTM,
   CM extends BaseMetadata = DCM,
+  FM extends Json = DFM,
+  FMD extends Json = DFMD,
 > = {
   /**
    * Gets a room. Returns null if {@link Client.enter} has not been called previously.
@@ -377,9 +382,18 @@ export type Client<
     E extends Json = DE,
     TM2 extends BaseMetadata = TM,
     CM2 extends BaseMetadata = CM,
+    FM2 extends Json = FM,
+    FMD2 extends Json = FMD,
   >(
     roomId: string
-  ): Room<P, S, U, E, TM2, CM2> | null;
+  ): Room<P, S, U, E, TM2, CM2, FM2, FMD2> | null;
+
+  /**
+   * @internal
+   * Returns a human-readable dump of every storage node in every room this
+   * client has entered. For debugging convergence issues only.
+   */
+  _dump(): string;
 
   /**
    * Enter a room.
@@ -393,6 +407,8 @@ export type Client<
     E extends Json = DE,
     TM2 extends BaseMetadata = TM,
     CM2 extends BaseMetadata = CM,
+    FM2 extends Json = FM,
+    FMD2 extends Json = FMD,
   >(
     roomId: string,
     ...args: OptionalTupleUnless<
@@ -400,7 +416,7 @@ export type Client<
       [options: EnterOptions<NoInfr<P>, NoInfr<S>>]
     >
   ): {
-    room: Room<P, S, U, E, TM2, CM2>;
+    room: Room<P, S, U, E, TM2, CM2, FM2, FMD2>;
     leave: () => void;
   };
 
@@ -473,7 +489,7 @@ export type Client<
    * will probably happen if you do.
    */
   // TODO Make this a getter, so we can provide M
-  readonly [kInternal]: PrivateClientApi<U, TM, CM>;
+  readonly [kInternal]: PrivateClientApi<U, TM, CM, FM, FMD>;
 
   /**
    * Returns the current global sync status of the Liveblocks client. If any
@@ -514,8 +530,6 @@ export type ClientOptions<U extends BaseUserMeta = DU> = {
   lostConnectionTimeout?: number; // in milliseconds
   backgroundKeepAliveTimeout?: number; // in milliseconds
   polyfills?: Polyfills;
-  largeMessageStrategy?: LargeMessageStrategy;
-  unstable_streamData?: boolean;
   /**
    * A function that returns a list of mention suggestions matching a string.
    */
@@ -560,10 +574,7 @@ export type ClientOptions<U extends BaseUserMeta = DU> = {
    */
   badgeLocation?: BadgeLocation;
 
-  /**
-   * @internal To point the client to a different Liveblocks server. Only
-   * useful for Liveblocks developers. Not for end users.
-   */
+  /** Point the client to an alternative Liveblocks server. */
   baseUrl?: string;
 
   /** @internal */
@@ -584,6 +595,14 @@ function getBaseUrl(baseUrl?: string | undefined): string {
     return baseUrl;
   } else {
     return DEFAULT_BASE_URL;
+  }
+}
+
+function isLocalhost(url: string): boolean {
+  try {
+    return new URL(url).hostname === "localhost";
+  } catch {
+    return false;
   }
 }
 
@@ -616,8 +635,10 @@ export function createClient<U extends BaseUserMeta = DU>(
   options: ClientOptions<U>
 ): Client<U> {
   const clientOptions = options;
+  const baseUrl = getBaseUrl(clientOptions.baseUrl);
   const throttleDelay =
     process.env.NODE_ENV !== "production" &&
+    isLocalhost(baseUrl) &&
     clientOptions.__DANGEROUSLY_disableThrottling
       ? 0
       : getThrottle(clientOptions.throttle ?? DEFAULT_THROTTLE);
@@ -627,7 +648,6 @@ export function createClient<U extends BaseUserMeta = DU>(
   const backgroundKeepAliveTimeout = getBackgroundKeepAliveTimeout(
     clientOptions.backgroundKeepAliveTimeout
   );
-  const baseUrl = getBaseUrl(clientOptions.baseUrl);
 
   const currentUserId = new Signal<string | undefined>(undefined);
 
@@ -642,7 +662,6 @@ export function createClient<U extends BaseUserMeta = DU>(
   const httpClient = createApiClient({
     baseUrl,
     fetchPolyfill,
-    currentUserId,
     authManager,
   });
 
@@ -667,7 +686,8 @@ export function createClient<U extends BaseUserMeta = DU>(
       ),
       authenticate: async () => {
         const resp = await authManager.getAuthValue({
-          requestedScope: "room:read",
+          resource: "personal",
+          access: "write",
         });
         if (resp.type === "public") {
           throw new StopRetrying(
@@ -693,10 +713,12 @@ export function createClient<U extends BaseUserMeta = DU>(
     E extends Json,
     TM extends BaseMetadata,
     CM extends BaseMetadata,
+    FM extends Json,
+    FMD extends Json,
   >(
     details: RoomDetails
   ): {
-    room: Room<P, S, U, E, TM, CM>;
+    room: Room<P, S, U, E, TM, CM, FM, FMD>;
     leave: () => void;
   } {
     // Create a new self-destructing leave function
@@ -717,7 +739,7 @@ export function createClient<U extends BaseUserMeta = DU>(
 
     details.unsubs.add(leave);
     return {
-      room: details.room as Room<P, S, U, E, TM, CM>,
+      room: details.room as Room<P, S, U, E, TM, CM, FM, FMD>,
       leave,
     };
   }
@@ -729,6 +751,8 @@ export function createClient<U extends BaseUserMeta = DU>(
     E extends Json,
     TM extends BaseMetadata,
     CM extends BaseMetadata,
+    FM extends Json,
+    FMD extends Json,
   >(
     roomId: string,
     ...args: OptionalTupleUnless<
@@ -736,7 +760,7 @@ export function createClient<U extends BaseUserMeta = DU>(
       [options: EnterOptions<NoInfr<P>, NoInfr<S>>]
     >
   ): {
-    room: Room<P, S, U, E, TM, CM>;
+    room: Room<P, S, U, E, TM, CM, FM, FMD>;
     leave: () => void;
   } {
     const existing = roomsById.get(roomId);
@@ -750,12 +774,22 @@ export function createClient<U extends BaseUserMeta = DU>(
         ? options.initialPresence(roomId)
         : options.initialPresence) ?? ({} as P);
 
-    const initialStorage =
+    const rawStorage =
       (typeof options.initialStorage === "function"
         ? options.initialStorage(roomId)
         : options.initialStorage) ?? ({} as S);
+    let initialStorage: S;
+    if (isLiveObject(rawStorage)) {
+      const obj: Record<string, unknown> = {};
+      for (const key of rawStorage.keys()) {
+        obj[key] = (rawStorage as LiveObject<LsonObject>).get(key);
+      }
+      initialStorage = obj as S;
+    } else {
+      initialStorage = rawStorage;
+    }
 
-    const newRoom = createRoom<P, S, U, E, TM, CM>(
+    const newRoom = createRoom<P, S, U, E, TM, CM, FM, FMD>(
       { initialPresence, initialStorage },
       {
         roomId,
@@ -767,16 +801,13 @@ export function createClient<U extends BaseUserMeta = DU>(
           createSocket: makeCreateSocketDelegateForRoom(
             roomId,
             baseUrl,
-            clientOptions.polyfills?.WebSocket,
-            options.engine
+            clientOptions.polyfills?.WebSocket
           ),
           authenticate: makeAuthDelegateForRoom(roomId, authManager),
         },
         enableDebugLogging: clientOptions.enableDebugLogging,
         baseUrl,
         errorEventSource: liveblocksErrorSource,
-        largeMessageStrategy: clientOptions.largeMessageStrategy,
-        unstable_streamData: !!clientOptions.unstable_streamData,
         roomHttpClient: httpClient as LiveblocksHttpApi<TM, CM>,
         createSyncSource,
         badgeLocation: clientOptions.badgeLocation ?? "bottom-right",
@@ -818,9 +849,11 @@ export function createClient<U extends BaseUserMeta = DU>(
     E extends Json,
     TM extends BaseMetadata,
     CM extends BaseMetadata,
-  >(roomId: string): Room<P, S, U, E, TM, CM> | null {
+    FM extends Json,
+    FMD extends Json,
+  >(roomId: string): Room<P, S, U, E, TM, CM, FM, FMD> | null {
     const room = roomsById.get(roomId)?.room;
-    return room ? (room as Room<P, S, U, E, TM, CM>) : null;
+    return room ? (room as Room<P, S, U, E, TM, CM, FM, FMD>) : null;
   }
 
   function logout() {
@@ -940,6 +973,10 @@ export function createClient<U extends BaseUserMeta = DU>(
       source.set(status);
     }
 
+    function getStatus(): InternalSyncStatus {
+      return source.get();
+    }
+
     function destroy() {
       unsub();
       const index = syncStatusSources.findIndex((item) => item === source);
@@ -954,7 +991,7 @@ export function createClient<U extends BaseUserMeta = DU>(
       }
     }
 
-    return { setSyncStatus, destroy };
+    return { setSyncStatus, getStatus, destroy };
   }
 
   // ----------------------------------------------------------------
@@ -1001,6 +1038,9 @@ export function createClient<U extends BaseUserMeta = DU>(
     {
       enterRoom,
       getRoom,
+
+      _dump: () =>
+        Array.from(roomsById.values(), ({ room }) => room._dump()).join("\n\n"),
 
       logout,
 

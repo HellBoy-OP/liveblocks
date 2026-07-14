@@ -3,8 +3,8 @@ import { freeze } from "../lib/freeze";
 import { nanoid } from "../lib/nanoid";
 import type { CreateMapOp, CreateOp, Op } from "../protocol/Op";
 import { OpCode } from "../protocol/Op";
-import type { IdTuple, SerializedMap } from "../protocol/SerializedCrdt";
-import { CrdtType } from "../protocol/SerializedCrdt";
+import type { MapStorageNode, SerializedMap } from "../protocol/StorageNode";
+import { CrdtType } from "../protocol/StorageNode";
 import type * as DevTools from "../types/DevToolsTreeNode";
 import type { ParentToChildNodeMap } from "../types/NodeMap";
 import type { ApplyResult, ManagedPool } from "./AbstractCrdt";
@@ -16,9 +16,8 @@ import {
   liveNodeToLson,
   lsonToLiveNode,
 } from "./liveblocks-helpers";
-import type { LiveNode, Lson } from "./Lson";
+import type { LiveNode, Lson, ToJson } from "./Lson";
 import type { UpdateDelta } from "./UpdateDelta";
-import type { ToImmutable } from "./utils";
 
 /**
  * A LiveMap notification that is sent in-client to any subscribers whenever
@@ -79,7 +78,9 @@ export class LiveMap<
     ops.push(op);
 
     for (const [key, value] of this.#map) {
-      ops.push(...value._toOps(this._id, key));
+      for (const childOp of value._toOps(this._id, key)) {
+        ops.push(childOp);
+      }
     }
 
     return ops;
@@ -87,7 +88,7 @@ export class LiveMap<
 
   /** @internal */
   static _deserialize(
-    [id, _item]: IdTuple<SerializedMap>,
+    [id, _item]: MapStorageNode,
     parentToChildren: ParentToChildNodeMap,
     pool: ManagedPool
   ): LiveMap<string, Lson> {
@@ -99,8 +100,9 @@ export class LiveMap<
       return map;
     }
 
-    for (const [id, crdt] of children) {
-      const child = deserialize([id, crdt], parentToChildren, pool);
+    for (const node of children) {
+      const crdt = node[1];
+      const child = deserialize(node, parentToChildren, pool);
       child._setParentLink(map, crdt.parentKey);
       map.#map.set(crdt.parentKey, child);
       map.invalidate();
@@ -450,20 +452,20 @@ export class LiveMap<
     };
   }
 
-  toImmutable(): ReadonlyMap<TKey, ToImmutable<TValue>> {
-    // Don't implement actual toImmutable logic in here. Implement it in
-    // ._toImmutable() instead. This helper merely exists to help TypeScript
+  toJSON(): { readonly [P in TKey]: ToJson<TValue> } {
+    // Don't implement actual toJSON logic in here. Implement it in
+    // ._toJSON() instead. This helper merely exists to help TypeScript
     // infer better return types.
-    return super.toImmutable() as ReadonlyMap<TKey, ToImmutable<TValue>>;
+    return super.toJSON() as { readonly [P in TKey]: ToJson<TValue> };
   }
 
   /** @internal */
-  _toImmutable(): ReadonlyMap<TKey, ToImmutable<TValue>> {
-    const result: Map<TKey, ToImmutable<TValue>> = new Map();
+  _toJSON(): { readonly [P in TKey]: ToJson<TValue> } {
+    const result: { [key: string]: unknown } = {};
     for (const [key, value] of this.#map) {
-      result.set(key, value.toImmutable() as ToImmutable<TValue>);
+      result[key] = value.toJSON();
     }
-    return freeze(result);
+    return freeze(result) as { [P in TKey]: ToJson<TValue> };
   }
 
   clone(): LiveMap<TKey, TValue> {

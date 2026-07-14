@@ -11,7 +11,7 @@ import {
   syncYjsChangesToLexical,
 } from "@lexical/yjs";
 import type { HistoryVersion } from "@liveblocks/core";
-import { useHistoryVersionData } from "@liveblocks/react";
+import { useHistoryVersionYjsData } from "@liveblocks/react";
 import { useOverrides } from "@liveblocks/react-ui";
 import {
   Button,
@@ -31,8 +31,7 @@ import { liveblocksConfig } from "../liveblocks-config";
 
 const AUTHORS_TRUNCATE = 3;
 
-export interface HistoryVersionPreviewProps
-  extends ComponentPropsWithoutRef<"div"> {
+export interface HistoryVersionPreviewProps extends ComponentPropsWithoutRef<"div"> {
   version: HistoryVersion;
   onVersionRestore?: (version: HistoryVersion) => void;
 }
@@ -113,7 +112,7 @@ export const HistoryVersionPreview = forwardRef<
   const [parentEditor, parentContext] = useLexicalComposerContext();
   const editor = useRef<LexicalEditor>();
   const $ = useOverrides();
-  const { isLoading, data, error } = useHistoryVersionData(version.id);
+  const { isLoading, data, error } = useHistoryVersionYjsData(version.id);
 
   const initialConfig = useMemo(() => {
     const nodes = Array.from(parentEditor._nodes.values()).map((n) => n.klass);

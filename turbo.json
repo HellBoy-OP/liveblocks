@@ -23,9 +23,14 @@
       "outputs": ["coverage/**"],
       "inputs": ["jest.*", "vitest.*", "src/**", "test/**"]
     },
+    "test:ci": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": ["jest.*", "vitest.*", "src/**", "test/**"]
+    },
     "test:types": {
       "dependsOn": ["build"],
-      "inputs": ["test-d/**"]
+      "inputs": ["test-d/**", "vitest.*"]
     },
     "test:deps": {
       // A package's `test:deps` script has no dependencies and can be run

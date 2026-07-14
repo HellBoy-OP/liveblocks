@@ -53,43 +53,43 @@ export type UpdateObjectOp = {
 export type CreateObjectOp = {
   readonly opId?: string;
   readonly id: string;
-  readonly intent?: "set";
-  readonly deletedId?: string;
   readonly type: OpCode.CREATE_OBJECT;
   readonly parentId: string;
   readonly parentKey: string;
   readonly data: JsonObject;
+  readonly intent?: "set" | "push";
+  readonly deletedId?: string;
 };
 
 export type CreateListOp = {
   readonly opId?: string;
   readonly id: string;
-  readonly intent?: "set";
-  readonly deletedId?: string;
   readonly type: OpCode.CREATE_LIST;
   readonly parentId: string;
   readonly parentKey: string;
+  readonly intent?: "set" | "push";
+  readonly deletedId?: string;
 };
 
 export type CreateMapOp = {
   readonly opId?: string;
   readonly id: string;
-  readonly intent?: "set";
-  readonly deletedId?: string;
   readonly type: OpCode.CREATE_MAP;
   readonly parentId: string;
   readonly parentKey: string;
+  readonly intent?: "set" | "push";
+  readonly deletedId?: string;
 };
 
 export type CreateRegisterOp = {
   readonly opId?: string;
   readonly id: string;
-  readonly intent?: "set";
-  readonly deletedId?: string;
   readonly type: OpCode.CREATE_REGISTER;
   readonly parentId: string;
   readonly parentKey: string;
   readonly data: Json;
+  readonly intent?: "set" | "push";
+  readonly deletedId?: string;
 };
 
 export type DeleteCrdtOp = {
@@ -113,6 +113,15 @@ export type IgnoredOp = {
 
 export function isIgnoredOp(op: ServerWireOp): op is IgnoredOp {
   return op.type === OpCode.DELETE_CRDT && op.id === "ACK";
+}
+
+export function isCreateOp<O extends Op>(op: O): op is O & CreateOp {
+  return (
+    op.type === OpCode.CREATE_OBJECT ||
+    op.type === OpCode.CREATE_REGISTER ||
+    op.type === OpCode.CREATE_MAP ||
+    op.type === OpCode.CREATE_LIST
+  );
 }
 
 export type SetParentKeyOp = {
@@ -147,7 +156,7 @@ export type ClientWireCreateOp = CreateOp & HasOpId;
 /**
  * ServerWireOp: Ops sent from server → client. Three variants:
  * 1. ClientWireOp — Full echo back of our own op, confirming it was applied
- * 2. AckOp — Our op was seen but intentionally ignored (still counts as ack)
+ * 2. IgnoredOp — Our op was seen but intentionally ignored (still counts as ack)
  * 3. Op without opId — Another client's op being forwarded to us
  */
 export type ServerWireOp =

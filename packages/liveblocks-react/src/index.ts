@@ -23,7 +23,11 @@ export type {
   RegisterAiKnowledgeProps,
   RegisterAiToolProps,
 } from "./types/ai";
-export { ClientContext, RoomContext, useClient } from "./contexts";
+export {
+  ClientContext,
+  GlobalRoomContext as RoomContext,
+  useClient,
+} from "./contexts";
 export {
   createLiveblocksContext,
   LiveblocksProvider,
@@ -71,6 +75,10 @@ export {
   useUpdateMyPresence,
   useUpdateRoomSubscriptionSettings,
   useHistoryVersionData,
+  useHistoryVersionStorageData,
+  useHistoryVersionYjsData,
+  useDeleteHistoryVersion,
+  useRestoreToStorageVersion,
 } from "./room";
 
 // Export the classic (non-Suspense) versions of our hooks
@@ -83,6 +91,14 @@ export {
   useSelf,
   useStorage,
   useThreads,
+  useFeeds,
+  useFeedMessages,
+  useCreateFeed,
+  useDeleteFeed,
+  useUpdateFeedMetadata,
+  useCreateFeedMessage,
+  useDeleteFeedMessage,
+  useUpdateFeedMessage,
   useSearchComments,
   useAttachmentUrl,
   useHistoryVersions,

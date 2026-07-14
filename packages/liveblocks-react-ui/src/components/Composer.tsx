@@ -8,16 +8,17 @@ import type {
   DTM,
   GroupMentionData,
   Patchable,
+  ThreadVisibility,
 } from "@liveblocks/core";
-import { assertNever, MENTION_CHARACTER, Permission } from "@liveblocks/core";
+import { assertNever, MENTION_CHARACTER } from "@liveblocks/core";
 import { useRoom } from "@liveblocks/react";
 import {
   useCreateRoomComment,
   useCreateRoomThread,
   useEditRoomComment,
+  useHasPermissionAccess,
   useLayoutEffect,
   useResolveMentionSuggestions,
-  useRoomPermissions,
 } from "@liveblocks/react/_private";
 import type {
   ComponentPropsWithoutRef,
@@ -31,14 +32,7 @@ import type {
   RefAttributes,
   SyntheticEvent,
 } from "react";
-import {
-  createContext,
-  forwardRef,
-  useCallback,
-  useMemo,
-  useRef,
-  useSyncExternalStore,
-} from "react";
+import { createContext, forwardRef, useCallback, useMemo, useRef } from "react";
 
 import { useLiveblocksUiConfig } from "../config";
 import { FLOATING_ELEMENT_SIDE_OFFSET } from "../constants";
@@ -70,13 +64,14 @@ import type {
   ComposerSubmitComment,
 } from "../primitives/Composer/types";
 import { useComposerAttachmentsDropArea } from "../primitives/Composer/utils";
+import { commentsResourceForVisibility } from "../shared";
 import type { ComposerBodyMark } from "../types";
 import { cn } from "../utils/cn";
 import { useControllableState } from "../utils/use-controllable-state";
 import { useIsGroupMentionMember } from "../utils/use-group-mention";
+import { GroupAvatar, UserAvatar } from "./Avatar";
 import { FileAttachment } from "./internal/Attachment";
 import { Attribution } from "./internal/Attribution";
-import { Avatar } from "./internal/Avatar";
 import { Button } from "./internal/Button";
 import type { EmojiPickerProps } from "./internal/EmojiPicker";
 import { EmojiPicker, EmojiPickerTrigger } from "./internal/EmojiPicker";
@@ -99,7 +94,7 @@ interface MarkToggleProps extends ComposerMarkToggleProps {
   shortcut?: string;
 }
 
-type ComposerCreateThreadProps<
+export type ComposerCreateThreadProps<
   TM extends BaseMetadata,
   CM extends BaseMetadata,
 > = {
@@ -113,12 +108,17 @@ type ComposerCreateThreadProps<
   metadata?: TM;
 
   /**
+   * The visibility of the thread to create.
+   */
+  visibility?: ThreadVisibility;
+
+  /**
    * The metadata of the comment to create.
    */
   commentMetadata?: CM;
 };
 
-type ComposerCreateCommentProps<CM extends BaseMetadata> = {
+export type ComposerCreateCommentProps<CM extends BaseMetadata> = {
   /**
    * The ID of the thread to reply to.
    */
@@ -129,12 +129,18 @@ type ComposerCreateCommentProps<CM extends BaseMetadata> = {
   metadata?: never;
 
   /**
+   * @internal
+   * The visibility of the parent thread.
+   */
+  visibility?: ThreadVisibility;
+
+  /**
    * The metadata of the comment to create.
    */
   commentMetadata?: CM;
 };
 
-type ComposerEditCommentProps<CM extends BaseMetadata> = {
+export type ComposerEditCommentProps<CM extends BaseMetadata> = {
   /**
    * The ID of the thread to edit a comment in.
    */
@@ -146,6 +152,12 @@ type ComposerEditCommentProps<CM extends BaseMetadata> = {
   commentId: string;
 
   metadata?: never;
+
+  /**
+   * @internal
+   * The visibility of the parent thread.
+   */
+  visibility?: ThreadVisibility;
 
   /**
    * The metadata of the comment to edit.
@@ -241,18 +253,17 @@ export type ComposerProps<
     roomId?: string;
   };
 
-interface ComposerEditorContainerProps
-  extends Pick<
-    ComposerProps,
-    | "defaultValue"
-    | "showAttachments"
-    | "showFormattingControls"
-    | "showAttribution"
-    | "overrides"
-    | "actions"
-    | "autoFocus"
-    | "disabled"
-  > {
+interface ComposerEditorContainerProps extends Pick<
+  ComposerProps,
+  | "defaultValue"
+  | "showAttachments"
+  | "showFormattingControls"
+  | "showAttribution"
+  | "overrides"
+  | "actions"
+  | "autoFocus"
+  | "disabled"
+> {
   isCollapsed: boolean | undefined;
   onEmptyChange: (isEmpty: boolean) => void;
   hasResolveMentionSuggestions: boolean;
@@ -419,7 +430,7 @@ function ComposerMentionSuggestions({
             >
               {mention.kind === "user" ? (
                 <>
-                  <Avatar
+                  <UserAvatar
                     userId={mention.id}
                     className="lb-composer-mention-suggestion-avatar"
                   />
@@ -430,7 +441,7 @@ function ComposerMentionSuggestions({
                 </>
               ) : mention.kind === "group" ? (
                 <>
-                  <Avatar
+                  <GroupAvatar
                     groupId={mention.id}
                     className="lb-composer-mention-suggestion-avatar"
                     icon={<UsersIcon />}
@@ -715,6 +726,7 @@ export const Composer = forwardRef(
       threadId,
       commentId,
       metadata,
+      visibility,
       commentMetadata,
       defaultValue,
       defaultAttachments,
@@ -761,27 +773,19 @@ export const Composer = forwardRef(
       controlledCollapsed,
       controlledOnCollapsedChange
     );
+    // Only auto-collapse composers that are explicitly meant to support a collapsed state.
+    const shouldCollapseWhenEmpty =
+      controlledCollapsed !== undefined || defaultCollapsed === true;
 
-    const canCommentFallback = useSyncExternalStore(
-      useCallback(
-        (callback) => {
-          if (room === null) return () => {};
-          return room.events.self.subscribeOnce(callback);
-        },
-        [room]
-      ),
-      useCallback(() => {
-        return room?.getSelf()?.canComment ?? true;
-      }, [room]),
-      useCallback(() => true, [])
+    const commentsResource =
+      threadId === undefined
+        ? commentsResourceForVisibility(visibility ?? "public")
+        : commentsResourceForVisibility(visibility);
+    const canComment = useHasPermissionAccess(
+      roomId,
+      commentsResource,
+      "write"
     );
-
-    const permissions = useRoomPermissions(roomId);
-    const canComment =
-      permissions.size > 0
-        ? permissions.has(Permission.CommentsWrite) ||
-          permissions.has(Permission.Write)
-        : canCommentFallback;
 
     const setEmptyRef = useCallback((isEmpty: boolean) => {
       isEmptyRef.current = isEmpty;
@@ -818,11 +822,16 @@ export const Composer = forwardRef(
           event.relatedTarget ?? document.activeElement
         );
 
-        if (isOutside && isEmptyRef.current && !isEmojiPickerOpenRef.current) {
+        if (
+          shouldCollapseWhenEmpty &&
+          isOutside &&
+          isEmptyRef.current &&
+          !isEmojiPickerOpenRef.current
+        ) {
           onCollapsedChange?.(true);
         }
       },
-      [onBlur, onCollapsedChange]
+      [onBlur, onCollapsedChange, shouldCollapseWhenEmpty]
     );
 
     const handleEditorClick = useCallback(
@@ -865,6 +874,7 @@ export const Composer = forwardRef(
           createThread({
             body: comment.body,
             metadata,
+            visibility,
             commentMetadata: commentMetadata as CM | undefined,
             attachments: comment.attachments,
           });
@@ -877,6 +887,7 @@ export const Composer = forwardRef(
         editComment,
         commentMetadata,
         metadata,
+        visibility,
         onComposerSubmit,
         threadId,
       ]

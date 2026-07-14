@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+CDPATH=''  # Don't let inherited CDPATHs hijack our relative cd's
 
 # Ensure this script can assume it's run from the repo's
 # root directory, even if the current working directory is
@@ -39,7 +40,7 @@ while getopts qc:fh flag; do
 done
 shift $(($OPTIND - 1))
 
-for dir in $(find examples -maxdepth 1 -type d | grep -Ee /); do
+for dir in $(find examples starter-kits -maxdepth 1 -type d | grep -Ee /); do
     if [ $quiet -eq 0 ]; then
         err
         err "==> In $dir"

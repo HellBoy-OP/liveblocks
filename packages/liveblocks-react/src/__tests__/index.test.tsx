@@ -1,13 +1,27 @@
 import { createClient, shallow } from "@liveblocks/client";
 import { ClientMsgCode, ServerMsgCode, wait } from "@liveblocks/core";
 import { render } from "@testing-library/react";
-import { rest } from "msw";
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-
-import { createRoomContext } from "../room";
+import type { ReactNode } from "react";
 import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
+
+import { useHasPermissionAccess } from "../_private";
+import { createRoomContext, useRoom as useRoomGlobal } from "../room";
+import {
+  RoomProvider,
   useCanRedo,
   useCanUndo,
+  useHistory,
   useIsInsideRoom,
   useMutation,
   useMyPresence,
@@ -24,19 +38,17 @@ const exampleToken =
   "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE2NjQ1NjY0MTAsImV4cCI6MTY2NDU3MDAxMCwicGlkIjoiNjA1YTRmZDMxYTM2ZDVlYTdhMmUwOGYxIiwidWlkIjoidXNlcjEiLCJwZXJtcyI6eyIqIjpbInJvb206d3JpdGUiXX0sImsiOiJhY2MifQ.OwLJdtVzMmIwIGO4gVWEJSng3DaUFsljpFXKE0Jcl1OTSHKCpDqJDkHMkkhgHmpUbBPMMdf8QmYa-4h4tMAikxzZL_tFdWQ-5kr92jOFqXPscDQTk0_GCMhv7R6vFj4YjT-msYVNVPI5M0Jlmm9fU5U_s3ZssEYhQl6AYkZT0XErrFYch8WmCVCIQ3bmFuUg5WDtnGJFiQIuCvLr0RyalJh4aILKPZ7ii_u9Q04__rN5kUhIqh2NaXWqFwsITuKaFwn24PJfBz-GJNX5Jk-tlmfJItkPFuBFp3WY8J9r9m59rJF35W_UxMU1tBNYVYRs8c3pjJKdnBiSUDUjNPvxr";
 let requestCount = 0;
 const server = setupServer(
-  rest.post("/api/auth", (_, res, ctx) => {
-    return res(
-      ctx.json({
-        token:
-          // Append a unique counter in the (unchecked) signature part of the
-          // JWT token at the end, to make each subsequent request return
-          // a unique value
-          `${exampleToken}${requestCount++}`,
-      })
-    );
+  http.post("/api/auth", () => {
+    return HttpResponse.json({
+      token:
+        // Append a unique counter in the (unchecked) signature part of the
+        // JWT token at the end, to make each subsequent request return
+        // a unique value
+        `${exampleToken}${requestCount++}`,
+    });
   }),
-  rest.post("/api/auth-fail", (_, res, ctx) => {
-    return res(ctx.status(400));
+  http.post("/api/auth-fail", () => {
+    return HttpResponse.json(null, { status: 400 });
   })
 );
 
@@ -52,7 +64,7 @@ afterAll(() => server.close());
 
 describe("RoomProvider", () => {
   test("autoConnect equals false should not call the auth endpoint", () => {
-    const authEndpointMock = jest.fn();
+    const authEndpointMock = vi.fn();
     const client = createClient({
       authEndpoint: authEndpointMock,
     });
@@ -69,7 +81,7 @@ describe("RoomProvider", () => {
   });
 
   test("autoConnect equals true should call the auth endpoint", () => {
-    const authEndpointMock = jest.fn();
+    const authEndpointMock = vi.fn();
     const client = createClient({
       authEndpoint: authEndpointMock,
     });
@@ -85,10 +97,7 @@ describe("RoomProvider", () => {
     expect(authEndpointMock).toHaveBeenCalled();
   });
 
-  // TODO: This behavior is a bug that should be fixed. Each createRoomContext()
-  // call should create its own isolated React context, allowing nested providers
-  // from different contexts to coexist independently.
-  test("nested providers from different contexts share the same React context", () => {
+  test("nested providers from different contexts should return their respective rooms", () => {
     const client = createClient({ authEndpoint: "/api/auth" });
 
     const contextA = createRoomContext(client);
@@ -97,10 +106,12 @@ describe("RoomProvider", () => {
     function TestComponent() {
       const roomA = contextA.useRoom();
       const roomB = contextB.useRoom();
+      const innermost = useRoomGlobal();
       return (
         <div>
           <span data-testid="room-a">{roomA.id}</span>
           <span data-testid="room-b">{roomB.id}</span>
+          <span data-testid="innermost">{innermost.id}</span>
         </div>
       );
     }
@@ -121,10 +132,9 @@ describe("RoomProvider", () => {
       </contextA.RoomProvider>
     );
 
-    // All contexts share the same underlying RoomContext, so the innermost
-    // provider wins and both hooks return the same room
-    expect(getByTestId("room-a").textContent).toBe("room-b"); // TODO: Should be "room-a" once fixed
+    expect(getByTestId("room-a").textContent).toBe("room-a");
     expect(getByTestId("room-b").textContent).toBe("room-b");
+    expect(getByTestId("innermost").textContent).toBe("room-b");
   });
 });
 
@@ -299,6 +309,68 @@ describe("useOthers", () => {
   });
 });
 
+describe("useHasPermissionAccess", () => {
+  test("optimistically allows writing to scoped comments resources before permission hints arrive", () => {
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <RoomProvider id="room" initialPresence={{ x: 0 }} autoConnect={false}>
+        {children}
+      </RoomProvider>
+    );
+
+    const publicAccess = renderHook(
+      () => useHasPermissionAccess("room", "comments:public", "write"),
+      { wrapper }
+    );
+    const privateAccess = renderHook(
+      () => useHasPermissionAccess("room", "comments:private", "write"),
+      { wrapper }
+    );
+
+    expect(publicAccess.result.current).toBe(true);
+    expect(privateAccess.result.current).toBe(true);
+  });
+
+  test("uses aggregate and scoped comment access from the connection before permission hints arrive", async () => {
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <RoomProvider id="room" initialPresence={{ x: 0 }}>
+        {children}
+      </RoomProvider>
+    );
+
+    const access = renderHook(
+      () => ({
+        comments: useHasPermissionAccess("room", "comments", "write"),
+        public: useHasPermissionAccess("room", "comments:public", "write"),
+        private: useHasPermissionAccess("room", "comments:private", "write"),
+      }),
+      { wrapper }
+    );
+
+    const sim = await websocketSimulator();
+    act(() =>
+      sim.simulateIncomingMessage({
+        type: ServerMsgCode.ROOM_STATE,
+        actor: 0,
+        nonce: "nonce-for-actor-0",
+        scopes: [
+          "room:write",
+          "comments:none",
+          "comments:public:write",
+          "comments:private:none",
+        ],
+        users: {},
+        meta: {},
+      })
+    );
+
+    expect(access.result.current).toEqual({
+      comments: true,
+      public: true,
+      private: false,
+    });
+  });
+});
+
 describe("useStorage", () => {
   test("return null before storage has loaded", () => {
     const { result } = renderHook(() => useStorage((root) => root.obj));
@@ -382,6 +454,27 @@ describe("useStorage", () => {
     expect(render2).toEqual(["FOO", "BAR"]);
     expect(render1).toBe(render2); // Referentially equal!
   });
+
+  test("re-renders after setLocal", async () => {
+    const { result } = renderHook(() =>
+      useStorage((root) => root.obj.localField)
+    );
+    const { result: mut } = renderHook(() =>
+      useMutation(
+        ({ storage }) => storage.get("obj").setLocal("localField", "hello"),
+        []
+      )
+    );
+
+    const sim = await websocketSimulator();
+    act(() => sim.simulateStorageLoaded());
+
+    expect(result.current).toBeUndefined();
+
+    act(() => mut.current());
+
+    expect(result.current).toBe("hello");
+  });
 });
 
 describe("useCanUndo / useCanRedo", () => {
@@ -437,5 +530,37 @@ describe("useCanUndo / useCanRedo", () => {
 
     expect(canUndo.result.current).toEqual(false);
     expect(canRedo.result.current).toEqual(true);
+  });
+});
+
+describe("useHistory", () => {
+  test("history.disable prevents mutations from being undoable", async () => {
+    const history = renderHook(() => useHistory());
+    const canUndo = renderHook(() => useCanUndo());
+    const mutation = renderHook(() =>
+      useMutation(
+        ({ storage }) => storage.get("obj").set("a", Math.random()),
+        []
+      )
+    );
+
+    const sim = await websocketSimulator();
+    act(() => sim.simulateExistingStorageLoaded());
+
+    // A normal mutation is undoable
+    act(() => mutation.result.current());
+    expect(canUndo.result.current).toEqual(true);
+
+    // Undo it to get back to clean state
+    act(() => history.result.current.undo());
+    expect(canUndo.result.current).toEqual(false);
+
+    // A mutation inside history.disable is not undoable
+    act(() => {
+      history.result.current.disable(() => {
+        mutation.result.current();
+      });
+    });
+    expect(canUndo.result.current).toEqual(false);
   });
 });

@@ -1,23 +1,35 @@
 import { assertNever } from "../lib/assert";
 import type { Relax } from "../lib/Relax";
-import type { BaseMetadata, CommentBody } from "../protocol/Comments";
+import type {
+  BaseMetadata,
+  CommentBody,
+  ThreadVisibility,
+} from "../protocol/Comments";
 import type { Patchable } from "./Patchable";
 
 // All possible error originating from using Presence, Storage, or Yjs
 
 type AiConnectionErrorContext = {
   type: "AI_CONNECTION_ERROR";
-  code: -1 | 4001 | (number & {}); // eslint-disable-line @typescript-eslint/ban-types
+  code: -1 | 4001 | (number & {});
 };
 
 type RoomConnectionErrorContext = {
   type: "ROOM_CONNECTION_ERROR";
-  code: -1 | 4001 | 4005 | 4006 | (number & {}); // eslint-disable-line @typescript-eslint/ban-types
+  code: -1 | 4001 | 4005 | 4006 | (number & {});
   roomId: string;
 };
 
 type LargeMessageErrorContext = {
   type: "LARGE_MESSAGE_ERROR";
+};
+
+type FeedRequestErrorContext = {
+  type: "FEED_REQUEST_ERROR";
+  roomId: string;
+  requestId: string;
+  code: string;
+  reason?: string;
 };
 
 // All possible errors originating from using Comments or Notifications
@@ -28,6 +40,7 @@ type CommentsOrNotificationsErrorContext =
       threadId: string;
       commentId: string;
       body: CommentBody;
+      visibility: ThreadVisibility;
       metadata: BaseMetadata;
       commentMetadata: BaseMetadata;
     }
@@ -106,6 +119,7 @@ export type LiveblocksErrorContext = Relax<
   | CommentsOrNotificationsErrorContext // from Comments or Notifications or UserNotificationSettings
   | AiConnectionErrorContext // from AI
   | LargeMessageErrorContext // whena  message is too large
+  | FeedRequestErrorContext // feed WebSocket mutations
 >;
 
 export class LiveblocksError extends Error {
@@ -182,6 +196,9 @@ function defaultMessageFromContext(context: LiveblocksErrorContext): string {
     case "UPDATE_ROOM_SUBSCRIPTION_SETTINGS_ERROR": return "Could not update room subscription settings";
     case "UPDATE_NOTIFICATION_SETTINGS_ERROR": return "Could not update notification settings";
     case "LARGE_MESSAGE_ERROR": return "Could not send large message";
+
+    case "FEED_REQUEST_ERROR":
+      return context.reason ?? "Feed request failed";
 
     default:
       return assertNever(context, "Unhandled case");

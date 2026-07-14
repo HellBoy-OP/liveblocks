@@ -1,8 +1,18 @@
-import type { BaseMetadata, CommentBody } from "@liveblocks/core";
-import { nanoid, Permission } from "@liveblocks/core";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { type CommentData, nanoid, Permission } from "@liveblocks/core";
+import { act, renderHook } from "@testing-library/react";
 import { addMinutes } from "date-fns";
+import { HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 
 import {
   dummyCommentData,
@@ -11,7 +21,14 @@ import {
   dummyThreadInboxNotificationData,
 } from "./_dummies";
 import MockWebSocket from "./_MockWebSocket";
-import { mockCreateComment, mockGetThreads } from "./_restMocks";
+import {
+  mockCompleteMultipartAttachmentUpload,
+  mockCreateComment,
+  mockCreateMultipartAttachmentUpload,
+  mockGetThreads,
+  mockUploadAttachment,
+  mockUploadMultipartAttachmentPart,
+} from "./_restMocks";
 import { createContextsForTest } from "./_utils";
 
 const server = setupServer();
@@ -29,6 +46,10 @@ afterEach(() => {
 
 afterAll(() => server.close());
 
+function createAttachmentFile(name: string, size: number) {
+  return new File([new Uint8Array(size)], name, { type: "image/png" });
+}
+
 describe("useCreateComment", () => {
   test("should create a comment optimistically and override with thread coming from server", async () => {
     const roomId = nanoid();
@@ -36,40 +57,32 @@ describe("useCreateComment", () => {
     const initialThread = dummyThreadData({ roomId });
 
     server.use(
-      mockGetThreads((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            data: [initialThread],
-            inboxNotifications: [],
-            subscriptions: [],
-            deletedThreads: [],
-            deletedInboxNotifications: [],
-            deletedSubscriptions: [],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetThreads(() => {
+        return HttpResponse.json({
+          data: [initialThread],
+          inboxNotifications: [],
+          subscriptions: [],
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       }),
-      mockCreateComment(
-        { threadId: initialThread.id },
-        async (req, res, ctx) => {
-          const json = await req.json<{ id: string; body: CommentBody }>();
+      mockCreateComment({ threadId: initialThread.id }, async ({ request }) => {
+        const json = await request.json();
 
-          const comment = dummyCommentData({
-            roomId,
-            threadId: initialThread.id,
-            body: json.body,
-            createdAt: fakeCreatedAt,
-          });
+        const comment = dummyCommentData({
+          roomId,
+          threadId: initialThread.id,
+          body: json.body,
+          createdAt: fakeCreatedAt,
+        });
 
-          return res(ctx.json(comment));
-        }
-      )
+        return HttpResponse.json(comment);
+      })
     );
 
     const {
@@ -90,24 +103,25 @@ describe("useCreateComment", () => {
 
     expect(result.current.threads).toBeUndefined();
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.threads).toEqual([initialThread])
     );
 
-    const comment = await act(() =>
-      result.current.createComment({
+    let comment!: CommentData;
+    act(() => {
+      comment = result.current.createComment({
         threadId: initialThread.id,
         body: {
           version: 1,
           content: [{ type: "paragraph", children: [{ text: "Hello" }] }],
         },
-      })
-    );
+      });
+    });
 
     expect(result.current.threads?.[0]?.comments[1]).toEqual(comment);
 
     // We're using the createdDate overriden by the server to ensure the optimistic update have been properly deleted
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.threads?.[0]?.comments[1]?.createdAt).toEqual(
         fakeCreatedAt
       )
@@ -129,41 +143,33 @@ describe("useCreateComment", () => {
     const fakeCreatedAt = addMinutes(new Date(), 5);
 
     server.use(
-      mockGetThreads((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            data: [initialThread],
-            inboxNotifications: [initialInboxNotification],
-            subscriptions: [initialSubscription],
-            deletedThreads: [],
-            deletedInboxNotifications: [],
-            deletedSubscriptions: [],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetThreads(() => {
+        return HttpResponse.json({
+          data: [initialThread],
+          inboxNotifications: [initialInboxNotification],
+          subscriptions: [initialSubscription],
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       }),
-      mockCreateComment(
-        { threadId: initialThread.id },
-        async (req, res, ctx) => {
-          const json = await req.json<{ id: string; body: CommentBody }>();
+      mockCreateComment({ threadId: initialThread.id }, async ({ request }) => {
+        const json = await request.json();
 
-          const comment = dummyCommentData({
-            roomId,
-            id: json.id,
-            body: json.body,
-            createdAt: fakeCreatedAt,
-            threadId: initialThread.id,
-          });
+        const comment = dummyCommentData({
+          roomId,
+          id: json.id,
+          body: json.body,
+          createdAt: fakeCreatedAt,
+          threadId: initialThread.id,
+        });
 
-          return res(ctx.json(comment));
-        }
-      )
+        return HttpResponse.json(comment);
+      })
     );
 
     const {
@@ -190,25 +196,26 @@ describe("useCreateComment", () => {
 
     expect(result.current.subscription.status).toEqual("not-subscribed");
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.subscription.unreadSince).toBeNull()
     );
 
-    const comment = await act(() =>
-      result.current.createComment({
+    let comment!: CommentData;
+    act(() => {
+      comment = result.current.createComment({
         threadId: initialThread.id,
         body: {
           version: 1,
           content: [{ type: "paragraph", children: [{ text: "Hello" }] }],
         },
-      })
-    );
+      });
+    });
 
     expect(result.current.subscription.status).toEqual("subscribed");
     expect(result.current.subscription.unreadSince).toEqual(comment.createdAt);
 
     // We're using the createdDate overriden by the server to ensure the optimistic update have been properly deleted
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.subscription.unreadSince).toEqual(fakeCreatedAt)
     );
 
@@ -220,30 +227,23 @@ describe("useCreateComment", () => {
     const initialThread = dummyThreadData({ roomId });
 
     server.use(
-      mockGetThreads((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            data: [initialThread],
-            inboxNotifications: [],
-            subscriptions: [],
-            deletedThreads: [],
-            deletedInboxNotifications: [],
-            deletedSubscriptions: [],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetThreads(() => {
+        return HttpResponse.json({
+          data: [initialThread],
+          inboxNotifications: [],
+          subscriptions: [],
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       }),
       mockCreateComment(
         { threadId: initialThread.id },
-        async (_req, res, ctx) => {
-          return res(ctx.status(500));
-        }
+        () => new HttpResponse(null, { status: 500 })
       )
     );
 
@@ -264,24 +264,25 @@ describe("useCreateComment", () => {
     );
 
     expect(result.current.threads).toBeUndefined();
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.threads).toEqual([initialThread])
     );
 
-    const comment = await act(() =>
-      result.current.createComment({
+    let comment!: CommentData;
+    act(() => {
+      comment = result.current.createComment({
         threadId: initialThread.id,
         body: {
           version: 1,
           content: [{ type: "paragraph", children: [{ text: "Hello" }] }],
         },
-      })
-    );
+      });
+    });
 
     expect(result.current.threads?.[0]?.comments[1]).toEqual(comment);
 
     // Wait for optimistic update to be rolled back
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.threads).toEqual([initialThread])
     );
 
@@ -295,45 +296,33 @@ describe("useCreateComment", () => {
     const metadata = { priority: 1, reviewed: false };
 
     server.use(
-      mockGetThreads((_req, res, ctx) => {
-        return res(
-          ctx.json({
-            data: [initialThread],
-            inboxNotifications: [],
-            subscriptions: [],
-            deletedThreads: [],
-            deletedInboxNotifications: [],
-            deletedSubscriptions: [],
-            meta: {
-              requestedAt: new Date().toISOString(),
-              nextCursor: null,
-              permissionHints: {
-                [roomId]: [Permission.Write],
-              },
+      mockGetThreads(() => {
+        return HttpResponse.json({
+          data: [initialThread],
+          inboxNotifications: [],
+          subscriptions: [],
+          meta: {
+            requestedAt: new Date().toISOString(),
+            nextCursor: null,
+            permissionHints: {
+              [roomId]: [Permission.RoomWrite],
             },
-          })
-        );
+          },
+        });
       }),
-      mockCreateComment(
-        { threadId: initialThread.id },
-        async (req, res, ctx) => {
-          const json = await req.json<{
-            id: string;
-            body: CommentBody;
-            metadata?: BaseMetadata;
-          }>();
+      mockCreateComment({ threadId: initialThread.id }, async ({ request }) => {
+        const json = await request.json();
 
-          const comment = dummyCommentData({
-            roomId,
-            threadId: initialThread.id,
-            body: json.body,
-            createdAt: fakeCreatedAt,
-            metadata: json.metadata ?? {},
-          });
+        const comment = dummyCommentData({
+          roomId,
+          threadId: initialThread.id,
+          body: json.body,
+          createdAt: fakeCreatedAt,
+          metadata: json.metadata ?? {},
+        });
 
-          return res(ctx.json(comment));
-        }
-      )
+        return HttpResponse.json(comment);
+      })
     );
 
     const {
@@ -354,30 +343,143 @@ describe("useCreateComment", () => {
 
     expect(result.current.threads).toBeUndefined();
 
-    await waitFor(() =>
+    await vi.waitFor(() =>
       expect(result.current.threads).toEqual([initialThread])
     );
 
-    const comment = await act(() =>
-      result.current.createComment({
+    let comment!: CommentData;
+    act(() => {
+      comment = result.current.createComment({
         threadId: initialThread.id,
         body: {
           version: 1,
           content: [{ type: "paragraph", children: [{ text: "Hello" }] }],
         },
         metadata,
-      })
-    );
+      });
+    });
 
     expect(result.current.threads?.[0]?.comments[1]).toEqual(comment);
     expect(comment.metadata).toEqual(metadata);
 
     // We're using the createdDate overriden by the server to ensure the optimistic update have been properly deleted
-    await waitFor(() => {
+    await vi.waitFor(() => {
       const serverComment = result.current.threads?.[0]?.comments[1];
       expect(serverComment?.createdAt).toEqual(fakeCreatedAt);
       expect(serverComment?.metadata).toEqual(metadata);
     });
+
+    unmount();
+  });
+});
+
+describe("useRoom attachments", () => {
+  test.each([
+    {
+      name: "my file.png",
+      encodedPath: "my%20file.png",
+    },
+    {
+      name: "literal%20name.png",
+      encodedPath: "literal%2520name.png",
+    },
+  ])(
+    "should upload $name without double-encoding the attachment path segment",
+    async ({ name, encodedPath }) => {
+      const roomId = "room 1";
+      const requests: Request[] = [];
+
+      const {
+        room: { RoomProvider, useRoom },
+      } = createContextsForTest();
+
+      const { result, unmount } = renderHook(() => useRoom(), {
+        wrapper: ({ children }) => (
+          <RoomProvider id={roomId}>{children}</RoomProvider>
+        ),
+      });
+
+      const attachment = result.current.prepareAttachment(
+        createAttachmentFile(name, 5)
+      );
+
+      server.use(
+        mockUploadAttachment(({ request }) => {
+          requests.push(request);
+
+          return HttpResponse.json({
+            type: "attachment",
+            id: attachment.id,
+            name,
+            mimeType: "image/png",
+            size: 5,
+          });
+        })
+      );
+
+      await act(async () => {
+        await result.current.uploadAttachment(attachment);
+      });
+
+      const request = requests[0];
+      expect(
+        request?.url.endsWith(
+          `/v2/c/rooms/room%201/attachments/${attachment.id}/upload/${encodedPath}?fileSize=5`
+        )
+      ).toBeTruthy();
+
+      unmount();
+    }
+  );
+
+  test("should upload multipart attachments without double-encoding the attachment path segment", async () => {
+    const roomId = "room 1";
+    const requests: Request[] = [];
+
+    const {
+      room: { RoomProvider, useRoom },
+    } = createContextsForTest();
+
+    const { result, unmount } = renderHook(() => useRoom(), {
+      wrapper: ({ children }) => (
+        <RoomProvider id={roomId}>{children}</RoomProvider>
+      ),
+    });
+
+    const attachment = result.current.prepareAttachment(
+      createAttachmentFile("my file.png", 5 * 1024 * 1024 + 1)
+    );
+
+    server.use(
+      mockCreateMultipartAttachmentUpload(({ request }) => {
+        requests.push(request);
+        return HttpResponse.json({ uploadId: "upload_123", key: "unused" });
+      }),
+      mockUploadMultipartAttachmentPart(({ params }) => {
+        const partNumber = Number(params.partNumber);
+        return HttpResponse.json({ partNumber, etag: `etag_${partNumber}` });
+      }),
+      mockCompleteMultipartAttachmentUpload(() =>
+        HttpResponse.json({
+          type: "attachment",
+          id: attachment.id,
+          name: "my file.png",
+          mimeType: "image/png",
+          size: 5 * 1024 * 1024 + 1,
+        })
+      )
+    );
+
+    await act(async () => {
+      await result.current.uploadAttachment(attachment);
+    });
+
+    const createMultipartRequest = requests[0];
+    expect(
+      createMultipartRequest?.url.endsWith(
+        `/v2/c/rooms/room%201/attachments/${attachment.id}/multipart/my%20file.png?fileSize=5242881`
+      )
+    ).toBeTruthy();
 
     unmount();
   });

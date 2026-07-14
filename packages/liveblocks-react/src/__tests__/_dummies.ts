@@ -30,6 +30,7 @@ export function dummyThreadData({
     roomId,
     metadata: {},
     resolved: false,
+    visibility: "public",
     ...overrides,
     comments: overrides.comments
       ? overrides.comments.map((comment) => ({ ...comment, threadId }))
@@ -155,6 +156,7 @@ export function dummyGroupData({
     createdAt,
     updatedAt,
     tenantId: "default",
+    organizationId: "default",
     scopes: { mention: true },
     members: [],
     ...overrides,

@@ -1,6 +1,7 @@
 // Private APIs
 
 export { useClientOrNull } from "./contexts";
+export { useInitial } from "./lib/use-initial";
 export { useLatest } from "./lib/use-latest";
 export { useLayoutEffect } from "./lib/use-layout-effect";
 export { getUmbrellaStoreForClient } from "./liveblocks";
@@ -14,6 +15,7 @@ export {
   useDeleteTextMention,
   useEditRoomComment,
   useEditRoomThreadMetadata,
+  useHasPermissionAccess,
   useMarkRoomThreadAsRead,
   useMarkRoomThreadAsResolved,
   useMarkRoomThreadAsUnresolved,
@@ -24,6 +26,8 @@ export {
   useRoomAttachmentUrl,
   useRoomPermissions,
   useRoomThreadSubscription,
+  useSuspendUntilPresenceReady,
+  useSuspendUntilStorageReady,
   useYjsProvider,
 } from "./room";
 export { useGroup } from "./use-group";

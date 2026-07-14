@@ -1,3 +1,5 @@
+import { describe, expect, test, vi } from "vitest";
+
 import { ThreadDB } from "../ThreadDB";
 import { dummyThreadData } from "./_dummies";
 
@@ -116,7 +118,7 @@ describe("ThreadDB", () => {
   });
 
   test("upsert if newer", () => {
-    const fn = jest.fn();
+    const fn = vi.fn();
     const db = new ThreadDB();
     const unsub = db.signal.subscribe(fn);
 
@@ -148,7 +150,7 @@ describe("ThreadDB", () => {
   });
 
   test("upsert should never overwrite already-deleted threads", () => {
-    const fn = jest.fn();
+    const fn = vi.fn();
     const db = new ThreadDB();
     const unsub = db.signal.subscribe(fn);
 
@@ -179,7 +181,7 @@ describe("ThreadDB", () => {
   });
 
   test("upsert if newer should never update deleted threads", () => {
-    const fn = jest.fn();
+    const fn = vi.fn();
     const db = new ThreadDB();
     const unsub = db.signal.subscribe(fn);
 
@@ -278,6 +280,7 @@ describe("ThreadDB", () => {
       roomId: "room1",
       createdAt: new Date("2024-10-09"),
       resolved: false,
+      visibility: "private",
       metadata: { color: "red", tag: "even" },
     });
     const th3 = dummyThreadData({
@@ -300,6 +303,7 @@ describe("ThreadDB", () => {
       roomId: "room1",
       createdAt: new Date("2024-10-12"),
       resolved: true,
+      visibility: "private",
       metadata: { color: "brown", tag: "odd" },
     });
 
@@ -333,6 +337,16 @@ describe("ThreadDB", () => {
       th1,
       th3,
       th5,
+    ]);
+
+    // Visibility checks
+    expect(db.findMany(undefined, { visibility: "private" }, "asc")).toEqual([
+      th2,
+      th5,
+    ]);
+    expect(db.findMany(undefined, { visibility: "public" }, "asc")).toEqual([
+      th1,
+      th3,
     ]);
 
     // Metadata checks

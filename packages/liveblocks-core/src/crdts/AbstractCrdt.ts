@@ -1,4 +1,5 @@
 import { assertNever } from "../lib/assert";
+import type { ReadonlyJson } from "../lib/Json";
 import type { Pos } from "../lib/position";
 import { asPos } from "../lib/position";
 import type {
@@ -8,11 +9,12 @@ import type {
   Op,
 } from "../protocol/Op";
 import { OpCode } from "../protocol/Op";
-import type { SerializedCrdt } from "../protocol/SerializedCrdt";
+import type { SerializedCrdt } from "../protocol/StorageNode";
 import type * as DevTools from "../types/DevToolsTreeNode";
-import type { Immutable } from "../types/Immutable";
 import type { LiveNode, Lson } from "./Lson";
 import type { StorageUpdate } from "./StorageUpdates";
+import type { ReadonlyUnacknowledgedOps } from "./UnacknowledgedOps";
+import { UnacknowledgedOps } from "./UnacknowledgedOps";
 
 export type ApplyResult =
   | { reverse: Op[]; modified: StorageUpdate }
@@ -24,7 +26,6 @@ export type ApplyResult =
  * to live nodes before and after they are inter-connected.
  */
 export interface ManagedPool {
-  readonly roomId: string;
   readonly nodes: ReadonlyMap<string, LiveNode>;
   readonly generateId: () => string;
   readonly generateOpId: () => string;
@@ -53,6 +54,12 @@ export interface ManagedPool {
    * @returns {void}
    */
   assertStorageIsWritable: () => void;
+
+  /**
+   * Read-only view of the client's still-unacknowledged ops (sent or
+   * pending-send, not yet confirmed by the server).
+   */
+  readonly unacknowledgedOps: ReadonlyUnacknowledgedOps;
 }
 
 export type CreateManagedPoolOptions = {
@@ -79,19 +86,27 @@ export type CreateManagedPoolOptions = {
    * have an effect upstream.
    */
   isStorageWritable?: () => boolean;
+
+  /**
+   * Read-only view of the client's still-unacknowledged ops. Used by CRDTs
+   * (e.g. LiveList) to know which of their optimistic mutations the server
+   * hasn't confirmed yet. Defaults to an empty view (e.g. server-side pools
+   * that dispatch-and-flush have no optimistic state to track).
+   */
+  unacknowledgedOps?: ReadonlyUnacknowledgedOps;
 };
 
 /**
  * @private Private API, never use this API directly.
  */
 export function createManagedPool(
-  roomId: string,
   options: CreateManagedPoolOptions
 ): ManagedPool {
   const {
     getCurrentConnectionId,
     onDispatch,
     isStorageWritable = () => true,
+    unacknowledgedOps = new UnacknowledgedOps(),
   } = options;
 
   let clock = 0;
@@ -99,7 +114,6 @@ export function createManagedPool(
   const nodes = new Map<string, LiveNode>();
 
   return {
-    roomId,
     nodes,
 
     getNode: (id: string) => nodes.get(id),
@@ -124,6 +138,8 @@ export function createManagedPool(
         );
       }
     },
+
+    unacknowledgedOps,
   };
 }
 
@@ -273,10 +289,6 @@ export abstract class AbstractCrdt {
     return this.#pool;
   }
 
-  get roomId(): string | null {
-    return this.#pool ? this.#pool.roomId : null;
-  }
-
   /** @internal */
   get _id(): string | undefined {
     return this.#id;
@@ -419,8 +431,8 @@ export abstract class AbstractCrdt {
   /** @internal */
   abstract _serialize(): SerializedCrdt;
 
-  /** This caches the result of the last .toImmutable() call for this Live node. */
-  #cachedImmutable?: Immutable;
+  /** This caches the result of the last .toJSON() call for this Live node. */
+  #cachedJson?: ReadonlyJson;
 
   #cachedTreeNodeKey?: string | number;
   /** This caches the result of the last .toTreeNode() call for this Live node. */
@@ -429,16 +441,12 @@ export abstract class AbstractCrdt {
   /**
    * @internal
    *
-   * Clear the Immutable cache, so that the next call to `.toImmutable()` will
-   * recompute the equivalent Immutable value again.  Call this after every
-   * mutation to the Live node.
+   * Clear the cached snapshots, so that the next call to `.toJSON()` will
+   * recompute. Call this after every mutation to the Live node.
    */
   invalidate(): void {
-    if (
-      this.#cachedImmutable !== undefined ||
-      this.#cachedTreeNode !== undefined
-    ) {
-      this.#cachedImmutable = undefined;
+    if (this.#cachedJson !== undefined || this.#cachedTreeNode !== undefined) {
+      this.#cachedJson = undefined;
       this.#cachedTreeNode = undefined;
 
       if (this.parent.type === "HasParent") {
@@ -452,7 +460,6 @@ export abstract class AbstractCrdt {
 
   /**
    * @internal
-   *
    * Return an snapshot of this Live tree for use in DevTools.
    */
   toTreeNode(key: string): DevTools.LsonTreeNode {
@@ -466,18 +473,30 @@ export abstract class AbstractCrdt {
   }
 
   /** @internal */
-  abstract _toImmutable(): Immutable;
+  abstract _toJSON(): ReadonlyJson;
 
   /**
-   * Return an immutable snapshot of this Live node and its children.
+   * @private
+   * Returns true if the cached JSON snapshot exists and is reference-equal
+   * to the given value. Does not trigger a recompute.
    */
-  toImmutable(): Immutable {
-    if (this.#cachedImmutable === undefined) {
-      this.#cachedImmutable = this._toImmutable();
+  hasCache(value: unknown): boolean {
+    return this.#cachedJson !== undefined && this.#cachedJson === value;
+  }
+
+  /**
+   * Return a JSON-compatible snapshot of this Live node and its children.
+   * LiveObject values become plain objects, LiveList values become arrays,
+   * and LiveMap values also become plain objects (not Map instances).
+   * The result is cached and only recomputed when the contents change.
+   */
+  toJSON(): ReadonlyJson {
+    if (this.#cachedJson === undefined) {
+      this.#cachedJson = this._toJSON();
     }
 
     // Return cached version
-    return this.#cachedImmutable;
+    return this.#cachedJson;
   }
 
   /**

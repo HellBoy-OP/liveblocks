@@ -1,9 +1,11 @@
 .idea/
+.liveblocks/
 .next/
 .nuxt/
 .plasmo/
 .svelte-kit/
 .turbo/
+.vitest-typecheck/
 .vercel/
 .vim/
 .vscode/
@@ -26,7 +28,14 @@ yarn-error.log*
 *.pem
 .DS_Store
 
-# Claude Code configs
-.claude/cache/
-.claude/*.local.json
+.claude/*
+!.claude/skills
 CLAUDE.local.md
+.agents/*
+!.agents/skills
+AGENTS.local.md
+.mcp.json
+
+# Playwright
+test-results/
+playwright-report/

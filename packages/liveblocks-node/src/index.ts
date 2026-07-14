@@ -1,4 +1,4 @@
-import { detectDupes } from "@liveblocks/core";
+import { detectDupes, type RoomPermissions } from "@liveblocks/core";
 
 import { PKG_FORMAT, PKG_NAME, PKG_VERSION } from "./version";
 
@@ -7,14 +7,19 @@ detectDupes(PKG_NAME, PKG_VERSION, PKG_FORMAT);
 export type {
   AiCopilot,
   CreateAiCopilotOptions,
+  CreateFeedMessageOptions,
+  CreateFeedOptions,
   CreateFileKnowledgeSourceOptions,
   CreateRoomOptions,
+  CreateVersionHistorySnapshotResponse,
   CreateWebKnowledgeSourceOptions,
   GetAiCopilotsOptions,
   GetInboxNotificationsOptions,
   GetKnowledgeSourcesOptions,
   GetRoomsOptions,
+  GetVersionHistoryOptions,
   GetWebKnowledgeSourceLinksOptions,
+  HistoryVersion,
   InboxNotificationsQueryCriteria,
   KnowledgeSource,
   LiveblocksOptions,
@@ -24,18 +29,20 @@ export type {
   MutateStorageOptions,
   Page,
   PaginationOptions,
-  RoomAccesses,
   RoomData,
-  RoomPermission,
   RoomsQueryCriteria,
   RoomUser,
+  SetPresenceOptions,
   ThreadParticipants,
   UpdateAiCopilotOptions,
+  UpdateFeedMessageOptions,
+  UpdateFeedOptions,
   UpdateRoomOptions,
   UpsertRoomOptions,
   WebKnowledgeSourceLink,
 } from "./client";
 export { Liveblocks, LiveblocksError } from "./client";
+export { markdownToCommentBody } from "./comment-body";
 export type {
   CommentCreatedEvent,
   CommentDeletedEvent,
@@ -66,6 +73,7 @@ export {
   isThreadNotificationEvent,
   WebhookHandler,
 } from "./webhooks";
+export type { RoomAccesses, RoomPermissions } from "@liveblocks/core";
 export type {
   CommentBody,
   CommentBodyBlockElement,
@@ -104,3 +112,8 @@ export {
   LiveObject,
   stringifyCommentBody,
 } from "@liveblocks/core";
+
+/**
+ * @deprecated Use `RoomPermissions` instead.
+ */
+export type RoomPermission = RoomPermissions;

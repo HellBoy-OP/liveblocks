@@ -1,10 +1,16 @@
-import type { BaseMetadata, DCM, DTM, ThreadData } from "@liveblocks/core";
+import {
+  type BaseMetadata,
+  type DCM,
+  type DTM,
+  shallow,
+  type ThreadData,
+} from "@liveblocks/core";
 import { useLayoutEffect } from "@liveblocks/react/_private";
 import {
   Thread as DefaultThread,
   type ThreadProps,
 } from "@liveblocks/react-ui";
-import { cn } from "@liveblocks/react-ui/_private";
+import { cn, useStableComponent } from "@liveblocks/react-ui/_private";
 import { type Editor, useEditorState } from "@tiptap/react";
 import type { ComponentPropsWithoutRef, ComponentType } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -51,7 +57,7 @@ export function AnchoredThreads({
   editor,
   ...props
 }: AnchoredThreadsProps) {
-  const Thread = components?.Thread ?? DefaultThread;
+  const Thread = useStableComponent(components?.Thread, DefaultThread);
   const containerRef = useRef<HTMLDivElement>(null);
   const [orderedThreads, setOrderedThreads] = useState<
     { position: { from: number; to: number }; thread: ThreadData }[]
@@ -71,25 +77,41 @@ export function AnchoredThreads({
     equalityFn: (prev, next) => {
       if (!prev || !next) return false;
       return (
-        prev.pluginState?.selectedThreadId ===
-          next.pluginState?.selectedThreadId &&
-        prev.pluginState?.threadPositions === next.pluginState?.threadPositions
-      ); // new map is made each time threadPos updates so shallow equality is fine
+        prev.pluginState?.threadPositions ===
+          next.pluginState?.threadPositions &&
+        shallow(
+          prev.pluginState?.activeThreadIds,
+          next.pluginState?.activeThreadIds
+        )
+      );
     },
   }) ?? { pluginState: undefined };
 
-  // TODO: lexical supoprts multiple threads being active, should probably do that here as well
   const handlePositionThreads = useCallback(() => {
     const container = containerRef.current;
-    if (container === null || !editor || !editor.view) return;
+    if (
+      container === null ||
+      !editor ||
+      !editor.view ||
+      editor.view.isDestroyed
+    ) {
+      return;
+    }
 
-    const activeIndex = orderedThreads.findIndex(
-      ({ thread }) => thread.id === pluginState?.selectedThreadId
-    );
+    const activeIds = pluginState?.activeThreadIds ?? [];
+
+    const firstActiveIndex =
+      activeIds.length === 0
+        ? -1
+        : orderedThreads.findIndex(({ thread }) =>
+            activeIds.includes(thread.id)
+          );
     const ascending =
-      activeIndex !== -1 ? orderedThreads.slice(activeIndex) : orderedThreads;
+      firstActiveIndex !== -1
+        ? orderedThreads.slice(firstActiveIndex)
+        : orderedThreads;
     const descending =
-      activeIndex !== -1 ? orderedThreads.slice(0, activeIndex) : [];
+      firstActiveIndex !== -1 ? orderedThreads.slice(0, firstActiveIndex) : [];
 
     const newPositions = new Map<string, number>();
 
@@ -135,7 +157,7 @@ export function AnchoredThreads({
     }
 
     setPositions(newPositions);
-  }, [editor, orderedThreads, pluginState?.selectedThreadId, elements]);
+  }, [editor, orderedThreads, pluginState?.activeThreadIds, elements]);
 
   useEffect(() => {
     if (!pluginState) return;
@@ -209,14 +231,15 @@ export function AnchoredThreads({
     >
       {orderedThreads.map(({ thread, position }) => {
         // In blocknote, it's possible for this to be undefined
-        if (!editor.view) {
+        if (!editor.view || editor.view.isDestroyed) {
           return null;
         }
         const coords = editor.view.coordsAtPos(
           Math.min(position.from, editor.state.doc.content.size - 1)
         );
         const rect = getRectFromCoords(coords);
-        const offset = editor.options.element?.getBoundingClientRect().top ?? 0;
+
+        const offset = editor.view.dom.getBoundingClientRect().top ?? 0;
 
         let top = rect.top - offset;
 
@@ -224,7 +247,8 @@ export function AnchoredThreads({
           top = positions.get(thread.id)!;
         }
 
-        const isActive = thread.id === pluginState?.selectedThreadId;
+        const isActive =
+          pluginState?.activeThreadIds.includes(thread.id) ?? false;
 
         return (
           <ThreadWrapper
